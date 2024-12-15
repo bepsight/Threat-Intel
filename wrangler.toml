@@ -1,0 +1,36 @@
+name = "threat-intel"
+main = "src/cloudflare/worker-threat-intel-ingest.js"
+account_id = "e1b28dfdcf5e79b14ae5ac2eb01cb89d"
+workers_dev = true
+compatibility_date = "2023-08-01"
+
+
+#[triggers] #triggers are temporarily disabled
+#crons = ["*/15 * * * *"]
+
+
+[[queues.producers]]
+queue = "my-queue"
+binding = "MY_QUEUE"
+
+[[d1_databases]]
+binding = "THREAT_INTEL_DB"
+database_name = "threat_intel"
+database_id = "a0f94c18-3778-43c6-899d-7390bb5f9d0d"
+
+[[routes]]
+pattern = "psight.network"
+custom_domain = true
+
+[[mtls_certificates]]
+binding = "MY_CERT"
+certificate_id = "04f4cbb2-6b28-419b-84dc-3c1927f28668"
+
+[build]
+command = "npm run build"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true

@@ -1,5 +1,6 @@
 import { Client, fql } from "fauna";
 
+
 export default {
   async fetch(request, env, ctx) {
    const d1 = env.THREAT_INTEL_DB;

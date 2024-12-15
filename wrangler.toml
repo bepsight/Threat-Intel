@@ -32,5 +32,3 @@ command = "npm run build"
 [observability]
 enabled = true
 
-[observability.logs]
-enabled = true

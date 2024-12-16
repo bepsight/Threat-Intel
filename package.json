@@ -3,13 +3,15 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo 'Build step complete."
+    "build": "echo 'Build step complete.'",
+    "test": "echo 'No tests specified.' && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "fauna": "^2.4.0"
+    "fauna": "^2.4.0",
+    "wrangler": "^3.95.0"
   }
 }

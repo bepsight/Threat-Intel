@@ -192,10 +192,25 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         },
         body: JSON.stringify(requestBody),
       });
-
+      // Log the request headers and body
+      await sendToLogQueue(env, {
+        level: "info",
+        message: `Sending request to ${type} endpoint ${url} `,
+        headers: JSON.stringify(headers),
+        requestBody: JSON.stringify(requestBody),
+      });
+      
       responseText = await response.text();
       console.log(`Response Status: ${response.status} ${response.statusText}`);
-      console.log(`Response Body: ${responseText}`);
+      //console.log(`Response Body: ${responseText}`);
+
+      await sendToLogQueue(env, {
+        level: "info",
+        message: `Received Response from ${type} endpoint ${url} `,
+        status: `Response Status: ${response.status} ${response.statusText}`,
+        responseBody: `Response Body: ${responseText}`,
+      });
+
 
       if (response.ok) {
         const responseData = JSON.parse(responseText);

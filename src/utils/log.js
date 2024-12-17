@@ -32,9 +32,6 @@ async function sendToLogQueue(env, logEntry) {
     timestamp: logEntry.timestamp || new Date().toISOString(),
   });
 
-  // Log the entire logEntry object for inspection
-  //console.log('sendToLogQueue: logEntry:', JSON.stringify(logEntry, null, 2));
-
   // If already sending logs, return
   if (isSendingLogs) return;
 
@@ -47,7 +44,7 @@ async function sendToLogQueue(env, logEntry) {
   try {
     while (logQueue.length > 0) {
       if (subrequestsMade >= MAX_SUBREQUESTS) {
-        console.log('sendToLogQueue:Maximum subrequest limit reached, exiting processing');
+        console.log('Maximum subrequest limit reached, exiting processing');
         break;
       }
 
@@ -61,19 +58,14 @@ async function sendToLogQueue(env, logEntry) {
       let retries = 0;
       while (retries < MAX_RETRIES) {
         try {
-          //console.log(`sendToLogQueue: Sending batch of ${messages.length} log entries to queue with Batch ID: ${batchID}`);
-
-          // Use sendBatch to reduce subrequests
           await env.MY_QUEUE.sendBatch(messages);
-
-          //console.log(`sendToLogQueue: Batch of ${messages.length} log entries sent to queue with Batch ID: ${batchID}`);
           subrequestsMade++;
           break;
         } catch (error) {
           retries++;
-          console.error(`sendToLogQueue: Error sending batch to queue with Batch ID: ${batchID} (attempt ${retries}):`, error);
+          console.error(`Error sending batch (attempt ${retries}):`, error);
           if (retries === MAX_RETRIES) {
-            console.error(`sendToLogQueue: Max retries reached, skipping batch with Batch ID: ${batchID}`);
+            console.error(`Max retries reached, skipping batch: ${batchID}`);
           } else {
             // Exponential backoff
             await new Promise(resolve => setTimeout(resolve, 1000 * retries));
@@ -81,7 +73,6 @@ async function sendToLogQueue(env, logEntry) {
         }
 
         if (subrequestsMade >= MAX_SUBREQUESTS) {
-          console.log('sendToLogQueue: Maximum subrequest limit reached during retries, exiting processing');
           break;
         }
       }
@@ -91,7 +82,7 @@ async function sendToLogQueue(env, logEntry) {
       }
     }
   } catch (error) {
-    console.error('sendToLogQueue: Error sending to queue:', error);
+    console.error('Error sending to queue:', error);
   } finally {
     isSendingLogs = false;
   }

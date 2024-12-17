@@ -32,10 +32,10 @@ export default {
       }
 
       // Verify D1 binding with explicit check
-      if (!env.MY_D1 || typeof env.MY_D1.prepare !== 'function') {
+      if (!env.THREAT_INTEL_DB || typeof env.THREAT_INTEL_DB.prepare !== 'function') {
         throw new Error('D1 database not properly configured');
       }
-      const d1 = env.MY_D1;
+      const d1 = env.THREAT_INTEL_DB;
 
       // Initialize Fauna with validation
       if (!env.FAUNA_SECRET) {

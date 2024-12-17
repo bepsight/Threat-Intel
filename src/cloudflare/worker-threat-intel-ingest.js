@@ -3,6 +3,17 @@ import { sendToLogQueue } from "../utils/log.js"; // Import custom log function
 
 export default {
   async fetch(request, env, ctx) {
+    // Early validation of required functions and environment
+    if (typeof fetch !== 'function') {
+      console.error("[ERROR] fetch is not available");
+      return new Response("Internal Server Error", { status: 500 });
+    }
+
+    if (typeof sendToLogQueue !== 'function') {
+      console.error("[ERROR] sendToLogQueue is not available");
+      return new Response("Internal Server Error", { status: 500 });
+    }
+
     try {
       // Verify environment and functions
       if (!env) {
@@ -10,24 +21,35 @@ export default {
       }
 
       console.log("[INFO] Fetch event triggered");
-      await sendToLogQueue(env, {
-        level: "info",
-        message: "Worker execution started",
-        timestamp: new Date().toISOString()
-      });
-
-      // Verify D1 binding
-      const d1 = env.MY_D1;
-      if (!d1) {
-        throw new Error('D1 database not configured');
+      
+      // Verify queue availability before sending logs
+      if (env.MY_QUEUE) {
+        await sendToLogQueue(env, {
+          level: "info",
+          message: "Worker execution started",
+          timestamp: new Date().toISOString()
+        });
       }
 
-      // Initialize Fauna with error handling
+      // Verify D1 binding with explicit check
+      if (!env.MY_D1 || typeof env.MY_D1.prepare !== 'function') {
+        throw new Error('D1 database not properly configured');
+      }
+      const d1 = env.MY_D1;
+
+      // Initialize Fauna with validation
+      if (!env.FAUNA_SECRET) {
+        throw new Error('Fauna secret not configured');
+      }
+
       let fauna;
       try {
         fauna = new Client({
           secret: env.FAUNA_SECRET,
         });
+        if (!fauna || typeof fauna.query !== 'function') {
+          throw new Error('Fauna client initialization failed');
+        }
         console.log("[INFO] Fauna client initialized");
       } catch (faunaError) {
         console.error("[ERROR] Fauna initialization failed:", faunaError.message);
@@ -107,12 +129,16 @@ export default {
       }
     } catch (error) {
       console.error("[ERROR] Worker execution failed:", error.message);
-      await sendToLogQueue(env, {
-        level: "error",
-        message: `Worker execution failed: ${error.message}`,
-        stack: error.stack,
-        timestamp: new Date().toISOString()
-      });
+      
+      // Safe logging with queue check
+      if (env?.MY_QUEUE) {
+        await sendToLogQueue(env, {
+          level: "error",
+          message: `Worker execution failed: ${error.message}`,
+          stack: error.stack,
+          timestamp: new Date().toISOString()
+        });
+      }
       
       return new Response(JSON.stringify({
         error: "Internal Server Error",

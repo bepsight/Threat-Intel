@@ -58,12 +58,12 @@ export async function sendToLogQueue(env, logEntry) {
       let retries = 0;
       while (retries < MAX_RETRIES) {
         try {
-          console.log(`sendToLogQueue: Sending batch of ${messages.length} log entries to queue with Batch ID: ${batchID}`);
+          //console.log(`sendToLogQueue: Sending batch of ${messages.length} log entries to queue with Batch ID: ${batchID}`);
 
           // Use sendBatch to reduce subrequests
           await env.MY_QUEUE.sendBatch(messages);
 
-          console.log(`sendToLogQueue: Batch of ${messages.length} log entries sent to queue with Batch ID: ${batchID}`);
+          //console.log(`sendToLogQueue: Batch of ${messages.length} log entries sent to queue with Batch ID: ${batchID}`);
           subrequestsMade++;
           break;
         } catch (error) {

@@ -1,3 +1,4 @@
+
 ////////////////////////////////////////////////////
 // Function to send logs to queue
 const logQueue = [];
@@ -16,7 +17,7 @@ function generateBatchID() {
   return batchID;
 }
 
-async function sendToLogQueue(env, logEntry) {
+export async function sendToLogQueue(env, logEntry) {
   if (!env?.MY_QUEUE) {
     console.error('Queue not configured');
     return;

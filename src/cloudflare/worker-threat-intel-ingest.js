@@ -1,12 +1,10 @@
 import { Client, fql } from "fauna";
 import { sendToLogQueue } from "../utils/log.js"; // Import custom log function
-let response;      // Declare 'response' here
-let responseText;  // Declare 'responseText' here
 
 export default {
   async fetch(request, env, ctx) {
     console.log("Fetch event triggered");
-    const d1 = env.THREAT_INTEL_DB; // Get D1 binding from environment
+    const d1 = env.MY_D1; // Get D1 binding from environment
 
     // Initialize Fauna client using the integration
     const fauna = new Client({
@@ -27,7 +25,8 @@ export default {
       return new Response("This endpoint is for fetching MISP data", { status: 404 });
     }
 
-
+    let response;      // Declare 'response' here
+    let responseText;  // Declare 'responseText' here
 
     try {
       await sendToLogQueue(env, {

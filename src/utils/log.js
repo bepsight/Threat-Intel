@@ -1,7 +1,3 @@
-// Export the sendToLogQueue function
-export { sendToLogQueue };
-
-
 ////////////////////////////////////////////////////
 // Function to send logs to queue
 const logQueue = [];
@@ -32,6 +28,9 @@ async function sendToLogQueue(env, logEntry) {
     timestamp: logEntry.timestamp || new Date().toISOString(),
   });
 
+  // Log the entire logEntry object for inspection
+  //console.log('sendToLogQueue: logEntry:', JSON.stringify(logEntry, null, 2));
+
   // If already sending logs, return
   if (isSendingLogs) return;
 
@@ -58,14 +57,19 @@ async function sendToLogQueue(env, logEntry) {
       let retries = 0;
       while (retries < MAX_RETRIES) {
         try {
+          console.log(`sendToLogQueue: Sending batch of ${messages.length} log entries to queue with Batch ID: ${batchID}`);
+
+          // Use sendBatch to reduce subrequests
           await env.MY_QUEUE.sendBatch(messages);
+
+          console.log(`sendToLogQueue: Batch of ${messages.length} log entries sent to queue with Batch ID: ${batchID}`);
           subrequestsMade++;
           break;
         } catch (error) {
           retries++;
-          console.error(`Error sending batch (attempt ${retries}):`, error);
+          console.error(`sendToLogQueue: Error sending batch to queue with Batch ID: ${batchID} (attempt ${retries}):`, error);
           if (retries === MAX_RETRIES) {
-            console.error(`Max retries reached, skipping batch: ${batchID}`);
+            console.error(`sendToLogQueue: Max retries reached, skipping batch with Batch ID: ${batchID}`);
           } else {
             // Exponential backoff
             await new Promise(resolve => setTimeout(resolve, 1000 * retries));
@@ -73,6 +77,7 @@ async function sendToLogQueue(env, logEntry) {
         }
 
         if (subrequestsMade >= MAX_SUBREQUESTS) {
+          console.log('Maximum subrequest limit reached during retries, exiting processing');
           break;
         }
       }
@@ -82,37 +87,8 @@ async function sendToLogQueue(env, logEntry) {
       }
     }
   } catch (error) {
-    console.error('Error sending to queue:', error);
+    console.error('sendToLogQueue: Error sending to queue:', error);
   } finally {
     isSendingLogs = false;
   }
-}
-
-// Inside fetchThreatIntelData function, after fetching the response
-const responseText = await response.text();
-console.log(`Response Status: ${response.status} ${response.statusText}`);
-console.log(`Response Body: ${responseText}`);
-
-// Correct date calculation
-if (lastFetchTime) {
-  const fromDateString = new Date(lastFetchTime).toISOString();
-  requestBody = { from: fromDateString };
-} else {
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-  requestBody = { from: thirtyDaysAgoString };
-}
-
-// Attempt to parse JSON if response is OK
-try {
-  if (response.ok) {
-    const responseData = JSON.parse(responseText);
-    data = responseData.response.Event || [];
-  } else {
-    throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
-  }
-} catch (error) {
-  console.error(`Error fetching ${type} data: ${error.message}`);
-  console.error(`Response Body: ${responseText}`);
-  // Rest of the error handling...
 }

@@ -3,86 +3,124 @@ import { sendToLogQueue } from "../utils/log.js"; // Import custom log function
 
 export default {
   async fetch(request, env, ctx) {
-    console.log("Fetch event triggered");
-    const d1 = env.MY_D1; // Get D1 binding from environment
-
-    // Initialize Fauna client using the integration
-    const fauna = new Client({
-      secret: env.FAUNA_SECRET, // Fauna secret from environment
-    });
-    console.log("Fauna client initialized");
-
-    const url = new URL(request.url);
-    const isCronRequest = ctx.scheduledTime !== undefined;
-    const isMispFetchRequest = url.pathname.endsWith("/fetchmisp");
-
-    console.log(`Request URL: ${request.url}`);
-    console.log(`Is Cron Request: ${isCronRequest}`);
-    console.log(`Is MISP Fetch Request: ${isMispFetchRequest}`);
-
-    if (!isCronRequest && !isMispFetchRequest) {
-      console.log("Invalid endpoint accessed");
-      return new Response("This endpoint is for fetching MISP data", { status: 404 });
-    }
-
-    let response;      // Declare 'response' here
-    let responseText;  // Declare 'responseText' here
-
     try {
-      await sendToLogQueue(env, {
-        level: "info",
-        message: "Starting threat intel fetching process.",
-      });
-      console.log("Starting threat intel fetching process");
-
-      const threatIntelFeeds = [
-        {
-          type: "misp",
-          url: "https://simp.xsight.network/events/restSearch",
-          format: "misp",
-        },
-        // Add more feeds if needed
-      ];
-
-      let allThreatIntel = [];
-
-      for (const feed of threatIntelFeeds) {
-        console.log(`Fetching data from feed: ${feed.url}`);
-        const feedData = await fetchThreatIntelData(feed.url, feed.type, env, feed.format);
-        console.log(`Fetched ${feedData.length} items from feed: ${feed.url}`);
-        allThreatIntel = [...allThreatIntel, ...feedData];
+      // Verify environment and functions
+      if (!env) {
+        throw new Error('Environment not available');
       }
 
-      console.log(`Total threat intel items fetched: ${allThreatIntel.length}`);
-
-      const relevantIndicators = filterRelevantThreatIntel(allThreatIntel);
-      console.log(`Relevant indicators extracted: ${relevantIndicators.length}`);
-
-      // Store data in D1 and FaunaDB
-      await storeInD1(d1, relevantIndicators, env);
-      console.log("Data stored in D1 successfully");
-
-      await storeInFaunaDB(relevantIndicators, fauna, env);
-      console.log("Data stored in FaunaDB successfully");
-
+      console.log("[INFO] Fetch event triggered");
       await sendToLogQueue(env, {
         level: "info",
-        message: "Threat intel data ingestion finished successfully.",
+        message: "Worker execution started",
+        timestamp: new Date().toISOString()
       });
-      console.log("Threat intel data ingestion finished successfully");
 
-      return new Response("Threat intel data ingestion finished successfully.", { status: 200 });
+      // Verify D1 binding
+      const d1 = env.MY_D1;
+      if (!d1) {
+        throw new Error('D1 database not configured');
+      }
+
+      // Initialize Fauna with error handling
+      let fauna;
+      try {
+        fauna = new Client({
+          secret: env.FAUNA_SECRET,
+        });
+        console.log("[INFO] Fauna client initialized");
+      } catch (faunaError) {
+        console.error("[ERROR] Fauna initialization failed:", faunaError.message);
+        throw faunaError;
+      }
+
+      // Request validation
+      const url = new URL(request.url);
+      const isCronRequest = ctx.scheduledTime !== undefined;
+      const isMispFetchRequest = url.pathname.endsWith("/fetchmisp");
+
+      console.log(`[INFO] Processing ${request.method} request to ${url.pathname}`);
+      
+      if (!isCronRequest && !isMispFetchRequest) {
+        console.log("[WARN] Invalid endpoint accessed");
+        return new Response("This endpoint is for fetching MISP data", { status: 404 });
+      }
+
+      let response;      // Declare 'response' here
+      let responseText;  // Declare 'responseText' here
+
+      try {
+        await sendToLogQueue(env, {
+          level: "info",
+          message: "Starting threat intel fetching process.",
+        });
+        console.log("Starting threat intel fetching process");
+
+        const threatIntelFeeds = [
+          {
+            type: "misp",
+            url: "https://simp.xsight.network/events/restSearch",
+            format: "misp",
+          },
+          // Add more feeds if needed
+        ];
+
+        let allThreatIntel = [];
+
+        for (const feed of threatIntelFeeds) {
+          console.log(`Fetching data from feed: ${feed.url}`);
+          const feedData = await fetchThreatIntelData(feed.url, feed.type, env, feed.format);
+          console.log(`Fetched ${feedData.length} items from feed: ${feed.url}`);
+          allThreatIntel = [...allThreatIntel, ...feedData];
+        }
+
+        console.log(`Total threat intel items fetched: ${allThreatIntel.length}`);
+
+        const relevantIndicators = filterRelevantThreatIntel(allThreatIntel);
+        console.log(`Relevant indicators extracted: ${relevantIndicators.length}`);
+
+        // Store data in D1 and FaunaDB
+        await storeInD1(d1, relevantIndicators, env);
+        console.log("Data stored in D1 successfully");
+
+        await storeInFaunaDB(relevantIndicators, fauna, env);
+        console.log("Data stored in FaunaDB successfully");
+
+        await sendToLogQueue(env, {
+          level: "info",
+          message: "Threat intel data ingestion finished successfully.",
+        });
+        console.log("Threat intel data ingestion finished successfully");
+
+        return new Response("Threat intel data ingestion finished successfully.", { status: 200 });
+      } catch (error) {
+        console.error(`Error: ${error.message}`);
+        if (responseText) {
+          console.error(`Response Body: ${responseText}`);
+        }
+        await sendToLogQueue(env, {
+          level: "error",
+          message: `Error fetching/processing threat intel data: ${error.message}`,
+          stack: error.stack,
+        });
+        return new Response(`Error fetching/processing threat intel data: ${error.message}`, { status: 500 });
+      }
     } catch (error) {
-      console.error(`Error: ${error.message}`);
-      if (responseText) {
-        console.error(`Response Body: ${responseText}`);
-      }
+      console.error("[ERROR] Worker execution failed:", error.message);
       await sendToLogQueue(env, {
         level: "error",
-        message: `Error fetching/processing threat intel data: ${error.message}`,
+        message: `Worker execution failed: ${error.message}`,
         stack: error.stack,
+        timestamp: new Date().toISOString()
       });
-      return new Response(`Error fetching/processing threat intel data: ${error.message}`, { status: 500 });
+      
+      return new Response(JSON.stringify({
+        error: "Internal Server Error",
+        message: error.message
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
   },
 };

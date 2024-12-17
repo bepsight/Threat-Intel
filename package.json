@@ -1,7 +1,7 @@
 {
-  "name": "threat-intel",
+  "name": "threat-intel-ingest",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "worker-threat-intel-ingest.js",
   "scripts": {
     "build": "echo 'Build step complete.'",
     "test": "echo 'No tests specified.' && exit 1"

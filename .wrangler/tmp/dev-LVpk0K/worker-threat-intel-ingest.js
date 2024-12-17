@@ -8,7 +8,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw new Error('Dynamic require of "' + x + '" is not supported');
 });
 
-// .wrangler/tmp/bundle-riOZf1/checked-fetch.js
+// .wrangler/tmp/bundle-1YxPSH/checked-fetch.js
 var urls = /* @__PURE__ */ new Set();
 function checkURL(request, init) {
   const url = request instanceof URL ? request : new URL(
@@ -1395,21 +1395,14 @@ try {
 // src/cloudflare/worker-threat-intel-ingest.js
 var worker_threat_intel_ingest_default = {
   async fetch(request, env, ctx) {
-    console.log("Fetch event triggered");
-    const d1 = env.THREAT_INTEL_DB;
+    const d1 = env.MY_D1;
     const fauna = new Le({
       secret: env.FAUNA_SECRET
-      // Fauna secret from environment
+      // Get Fauna secret from environment
     });
-    console.log("Fauna client initialized");
-    const url = new URL(request.url);
     const isCronRequest = ctx.scheduledTime !== void 0;
-    const isMispFetchRequest = url.pathname.endsWith("/fetchmisp");
-    console.log(`Request URL: ${request.url}`);
-    console.log(`Is Cron Request: ${isCronRequest}`);
-    console.log(`Is MISP Fetch Request: ${isMispFetchRequest}`);
+    const isMispFetchRequest = request.url.endsWith("/fetchmisp");
     if (!isCronRequest && !isMispFetchRequest) {
-      console.log("Invalid endpoint accessed");
       return new Response("This endpoint is for fetching MISP data", { status: 404 });
     }
     try {
@@ -1417,41 +1410,44 @@ var worker_threat_intel_ingest_default = {
         level: "info",
         message: "Starting threat intel fetching process."
       });
-      console.log("Starting threat intel fetching process");
       const threatIntelFeeds = [
         {
           type: "misp",
           url: "https://simp.xsight.network/events/restSearch",
+          // Updated URL
           format: "misp"
+        },
+        {
+          type: "stix",
+          url: "https://example.com/threat-intel-feed1.json",
+          format: "stix"
+        },
+        {
+          type: "stix",
+          url: "https://example.com/threat-intel-feed2.json",
+          format: "stix"
         }
-        // Add more feeds if needed
+        // Add more feeds here
       ];
       let allThreatIntel = [];
       for (const feed of threatIntelFeeds) {
-        console.log(`Fetching data from feed: ${feed.url}`);
         const feedData = await fetchThreatIntelData(feed.url, feed.type, env, feed.format);
-        console.log(`Fetched ${feedData.length} items from feed: ${feed.url}`);
         allThreatIntel = [...allThreatIntel, ...feedData];
       }
-      console.log(`Total threat intel items fetched: ${allThreatIntel.length}`);
-      const relevantIndicators = filterRelevantThreatIntel(allThreatIntel);
-      console.log(`Relevant indicators extracted: ${relevantIndicators.length}`);
-      await storeInD1(d1, relevantIndicators, env);
-      console.log("Data stored in D1 successfully");
-      await storeInFaunaDB(relevantIndicators, fauna, env);
-      console.log("Data stored in FaunaDB successfully");
+      const stixObjects = filterRelevantThreatIntel(allThreatIntel);
+      await storeInD1(d1, stixObjects, env);
+      await storeInFaunaDB(stixObjects, fauna, env);
       await sendToLogQueue(env, {
         level: "info",
         message: "Threat intel data ingestion finished successfully."
       });
-      console.log("Threat intel data ingestion finished successfully");
       return new Response("Threat intel data ingestion finished successfully.", { status: 200 });
     } catch (error) {
-      console.error(`Error: ${error.message}`);
       await sendToLogQueue(env, {
         level: "error",
         message: `Error fetching/processing threat intel data: ${error.message}`,
         stack: error.stack
+        // Send the stack trace for better debugging
       });
       return new Response(`Error fetching/processing threat intel data: ${error.message}`, { status: 500 });
     }
@@ -1459,7 +1455,6 @@ var worker_threat_intel_ingest_default = {
 };
 async function fetchThreatIntelData(url, type2, env, format, lastFetchTime2) {
   try {
-    console.log(`Fetching ${type2} data from ${url}`);
     await sendToLogQueue(env, {
       level: "info",
       message: `Fetching ${type2} data from ${url}.`
@@ -1468,13 +1463,15 @@ async function fetchThreatIntelData(url, type2, env, format, lastFetchTime2) {
     if (type2 === "misp") {
       let requestBody2 = {};
       if (lastFetchTime2) {
-        const fromDateString = new Date(lastFetchTime2).toISOString();
+        const fromDate = new Date(lastFetchTime2);
+        const fromDateString = fromDate.toISOString();
         requestBody2 = { from: fromDateString };
       } else {
-        const thirtyDaysAgoString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3).toISOString();
+        const thirtyDaysAgo = /* @__PURE__ */ new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
         requestBody2 = { from: thirtyDaysAgoString };
       }
-      console.log(`Request body: ${JSON.stringify(requestBody2)}`);
       await sendToLogQueue(env, {
         level: "info",
         message: `Using filters ${JSON.stringify(requestBody2)} to fetch ${type2} data from ${url}.`
@@ -1482,10 +1479,10 @@ async function fetchThreatIntelData(url, type2, env, format, lastFetchTime2) {
       const response2 = await fetch(url, {
         method: "POST",
         headers: {
-          Accept: "application/json",
+          "Accept": "application/json",
           "Content-Type": "application/json",
-          Authorization: env.MISP_API_KEY
-          // Set the API key in the authorization header
+          "Authorization": env.MISP_API_KEY
+          // Set the api key in authorization header
         },
         body: JSON.stringify(requestBody2)
       });
@@ -1493,68 +1490,136 @@ async function fetchThreatIntelData(url, type2, env, format, lastFetchTime2) {
         throw new Error(`Failed to fetch ${type2} data: ${response2.status} ${response2.statusText}`);
       }
       const responseData = await response2.json();
-      data2 = responseData.response.Event || [];
+      data2 = responseData.response.Event;
     }
-    console.log(`Successfully fetched ${data2.length} ${type2} items from ${url}`);
+    if (type2 === "stix") {
+      if (lastFetchTime2) {
+        const response2 = await fetch(`${url}?modified_since=${lastFetchTime2}`);
+        if (!response2.ok) {
+          throw new Error(
+            `Failed to fetch ${type2} data: ${response2.status} ${response2.statusText}`
+          );
+        }
+        const responseData = await response2.json();
+        data2 = responseData.objects;
+      } else {
+        const thirtyDaysAgo = /* @__PURE__ */ new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
+        const response2 = await fetch(`${url}?modified_since=${thirtyDaysAgoString}`);
+        if (!response2.ok) {
+          throw new Error(
+            `Failed to fetch ${type2} data: ${response2.status} ${response2.statusText}`
+          );
+        }
+        const responseData = await response2.json();
+        data2 = responseData.objects;
+      }
+    }
     await sendToLogQueue(env, {
       level: "info",
       message: `Successfully fetched ${type2} data from ${url}.`
     });
     return data2;
   } catch (error) {
-    console.error(`Error fetching ${type2} data: ${error.message}`);
     await sendToLogQueue(env, {
       level: "error",
       message: `Error fetching ${type2} data: ${error.message}`,
       stack: error.stack
+      // Send the stack trace for better debugging
     });
     throw error;
   }
 }
 __name(fetchThreatIntelData, "fetchThreatIntelData");
 function filterRelevantThreatIntel(stixObjects) {
-  console.log("Filtering relevant threat intel");
   const relevantIndicators = [];
   stixObjects.forEach((object) => {
-    if (object && object.Attribute) {
-      object.Attribute.forEach((attr) => {
+    if (object.type === "indicator" && object.pattern_type === "stix") {
+      const ipRegex = /\[ipv4-addr:value = '(.*?)'\]/;
+      const matchIP = object.pattern.match(ipRegex);
+      if (matchIP && matchIP[1]) {
         relevantIndicators.push({
-          type: attr.type,
-          value: attr.value,
-          category: attr.category,
-          timestamp: attr.timestamp,
-          comment: attr.comment
+          type: "ip",
+          value: matchIP[1],
+          labels: object.labels,
+          description: object.description,
+          timestamp: object.modified,
+          confidence: object.confidence
         });
+      }
+      const ipV6Regex = /\[ipv6-addr:value = '(.*?)'\]/;
+      const matchIPv6 = object.pattern.match(ipV6Regex);
+      if (matchIPv6 && matchIPv6[1]) {
+        relevantIndicators.push({
+          type: "ip",
+          value: matchIPv6[1],
+          labels: object.labels,
+          description: object.description,
+          timestamp: object.modified,
+          confidence: object.confidence
+        });
+      }
+    }
+    if (object.type === "vulnerability") {
+      const vulnerability = {
+        type: "vulnerability",
+        cve: object.external_references && object.external_references.find((ref) => ref.source_name === "cve")?.external_id,
+        name: object.name,
+        description: object.description,
+        labels: object.labels,
+        modified: object.modified
+      };
+      relevantIndicators.push(vulnerability);
+    }
+    if (object.type === "software") {
+      relevantIndicators.push({
+        type: "software",
+        name: object.name,
+        cpe: object.cpe,
+        labels: object.labels,
+        description: object.description,
+        modified: object.modified
+      });
+    }
+    if (object.type === "malware" || object.type === "tool") {
+      relevantIndicators.push({
+        type: object.type,
+        name: object.name,
+        labels: object.labels,
+        description: object.description,
+        modified: object.modified
       });
     }
   });
-  console.log(`Filtered ${relevantIndicators.length} relevant indicators`);
   return relevantIndicators;
 }
 __name(filterRelevantThreatIntel, "filterRelevantThreatIntel");
 async function storeInD1(d1, data2, env) {
   try {
-    console.log("Storing data in D1");
     for (const threat of data2) {
-      const searchableText = `${threat.type} ${threat.value || ""} ${threat.description || ""}`;
+      const searchableText = `${threat.type} ${threat.value || ""} ${threat.description || ""} ${threat.cve || ""} ${threat.name || ""} ${threat.cpe || ""}`;
       await d1.prepare(
-        "INSERT INTO threat_intel (type, value, category, timestamp, comment, searchable_text) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO threat_intel (type, value, labels, description, timestamp , confidence, cve, name, cpe, modified, searchable_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
       ).bind(
         threat.type,
         threat.value || null,
-        threat.category || null,
+        JSON.stringify(threat.labels) || null,
+        threat.description || null,
         threat.timestamp || null,
-        threat.comment || null,
+        threat.confidence || null,
+        threat.cve || null,
+        threat.name || null,
+        threat.cpe || null,
+        threat.modified || null,
         searchableText
       ).run();
     }
-    console.log("Data stored in D1 successfully");
     await sendToLogQueue(env, {
       level: "info",
       message: "Threat intel data stored in D1 successfully."
     });
   } catch (error) {
-    console.error(`Error storing data in D1: ${error.message}`);
     await sendToLogQueue(env, {
       level: "error",
       message: `Error storing threat intel in D1: ${error.message}`,
@@ -1566,22 +1631,15 @@ async function storeInD1(d1, data2, env) {
 __name(storeInD1, "storeInD1");
 async function storeInFaunaDB(data2, fauna, env) {
   try {
-    console.log("Storing data in FaunaDB");
     for (const threat of data2) {
-      const query = ft`
-        Threats.create({
-          data: ${threat}
-        })
-      `;
-      await fauna.query(query);
+      const query_create = ft`Threats.create({ data: ${threat} })`;
+      await fauna.query(query_create);
     }
-    console.log("Data stored in FaunaDB successfully");
     await sendToLogQueue(env, {
       level: "info",
       message: "Threat intel data stored in FaunaDB successfully."
     });
   } catch (error) {
-    console.error(`Error storing data in FaunaDB: ${error.message}`);
     await sendToLogQueue(env, {
       level: "error",
       message: `Error storing threat intel in FaunaDB: ${error.message}`,
@@ -1633,7 +1691,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-riOZf1/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-1YxPSH/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -1665,7 +1723,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-riOZf1/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-1YxPSH/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

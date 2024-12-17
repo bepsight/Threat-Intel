@@ -188,6 +188,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
           Accept: "application/json",
           "Content-Type": "application/json",
           Authorization: env.MISP_API_KEY, // Set the API key in the authorization header
+          "cf-worker": "true", // Add this header to go through cloudflare fireall rule for simp.xsight.network
         },
         body: JSON.stringify(requestBody),
       });

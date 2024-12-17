@@ -25,6 +25,9 @@ export default {
       return new Response("This endpoint is for fetching MISP data", { status: 404 });
     }
 
+    let response;      // Declare 'response' here
+    let responseText;  // Declare 'responseText' here
+
     try {
       await sendToLogQueue(env, {
         level: "info",
@@ -71,6 +74,9 @@ export default {
       return new Response("Threat intel data ingestion finished successfully.", { status: 200 });
     } catch (error) {
       console.error(`Error: ${error.message}`);
+      if (responseText) {
+        console.error(`Response Body: ${responseText}`);
+      }
       await sendToLogQueue(env, {
         level: "error",
         message: `Error fetching/processing threat intel data: ${error.message}`,
@@ -83,8 +89,8 @@ export default {
 
 // Function to fetch threat intel data
 async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
-  let response;      // Declare response in the outer scope
-  let responseText;  // Declare responseText in the outer scope
+  let response;      // Declare 'response' here
+  let responseText;  // Declare 'responseText' here
   try {
     console.log(`Fetching ${type} data from ${url}`);
     await sendToLogQueue(env, {
@@ -100,8 +106,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         const fromDateString = new Date(lastFetchTime).toISOString();
         requestBody = { from: fromDateString };
       } else {
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
+        const thirtyDaysAgoString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         requestBody = { from: thirtyDaysAgoString };
       }
 
@@ -113,7 +118,6 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         message: `Using filters ${JSON.stringify(requestBody)} to fetch ${type} data from ${url}.`,
       });
 
-      // Make the fetch request
       response = await fetch(url, {
         method: "POST",
         headers: {
@@ -124,12 +128,10 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         body: JSON.stringify(requestBody),
       });
 
-      // Read the response text
       responseText = await response.text();
       console.log(`Response Status: ${response.status} ${response.statusText}`);
       console.log(`Response Body: ${responseText}`);
 
-      // Check if response is OK
       if (response.ok) {
         const responseData = JSON.parse(responseText);
         data = responseData.response.Event || [];

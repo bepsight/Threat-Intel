@@ -8,7 +8,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw new Error('Dynamic require of "' + x + '" is not supported');
 });
 
-// .wrangler/tmp/bundle-RLNp6D/checked-fetch.js
+// .wrangler/tmp/bundle-XoCYlu/checked-fetch.js
 var urls = /* @__PURE__ */ new Set();
 function checkURL(request, init) {
   const url = request instanceof URL ? request : new URL(
@@ -1413,6 +1413,8 @@ var worker_threat_intel_ingest_default = {
       console.log("Invalid endpoint accessed");
       return new Response("This endpoint is for fetching MISP data", { status: 404 });
     }
+    let response2;
+    let responseText2;
     try {
       await sendToLogQueue(env, {
         level: "info",
@@ -1449,6 +1451,9 @@ var worker_threat_intel_ingest_default = {
       return new Response("Threat intel data ingestion finished successfully.", { status: 200 });
     } catch (error) {
       console.error(`Error: ${error.message}`);
+      if (responseText2) {
+        console.error(`Response Body: ${responseText2}`);
+      }
       await sendToLogQueue(env, {
         level: "error",
         message: `Error fetching/processing threat intel data: ${error.message}`,
@@ -1474,8 +1479,7 @@ async function fetchThreatIntelData(url, type2, env, format, lastFetchTime2) {
         const fromDateString = new Date(lastFetchTime2).toISOString();
         requestBody2 = { from: fromDateString };
       } else {
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
-        const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
+        const thirtyDaysAgoString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3).toISOString();
         requestBody2 = { from: thirtyDaysAgoString };
       }
       console.log(`Request body: ${JSON.stringify(requestBody2)}`);
@@ -1644,7 +1648,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-RLNp6D/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-XoCYlu/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -1676,7 +1680,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-RLNp6D/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-XoCYlu/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

@@ -153,8 +153,10 @@ export default {
 
 // Function to fetch threat intel data
 async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
-  let response;      // Declare 'response' here
-  let responseText;  // Declare 'responseText' here
+  let response;
+  let responseText;
+  let headers;
+  
   try {
     console.log(`Fetching ${type} data from ${url}`);
     await sendToLogQueue(env, {
@@ -165,7 +167,6 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
     let data = [];
     if (type === "misp") {
       let requestBody = {};
-      // Use time-based filters if available to fetch only new data
       if (lastFetchTime) {
         const fromDateString = new Date(lastFetchTime).toISOString();
         requestBody = { from: fromDateString };
@@ -176,30 +177,29 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
       console.log(`Request body: ${JSON.stringify(requestBody)}`);
 
-      // Log the filter parameters
+      // Define headers before use
+      headers = {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: env.MISP_API_KEY,
+        "cf-worker": "true"
+      };
+
+      // Log request details
       await sendToLogQueue(env, {
         level: "info",
-        message: `Using filters ${JSON.stringify(requestBody)} to fetch ${type} data from ${url}.`,
+        message: "Request details",
+        headers: JSON.stringify(headers),
+        body: JSON.stringify(requestBody),
+        url: url
       });
 
       response = await fetch(url, {
         method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          Authorization: env.MISP_API_KEY, // Set the API key in the authorization header
-          "cf-worker": "true", // Add this header to go through cloudflare fireall rule for simp.xsight.network
-        },
+        headers,
         body: JSON.stringify(requestBody),
       });
-      // Log the request headers and body
-      await sendToLogQueue(env, {
-        level: "info",
-        message: `Sending request to ${type} endpoint ${url} `,
-        headers: JSON.stringify(headers),
-        requestBody: JSON.stringify(requestBody),
-      });
-      
+
       responseText = await response.text();
       console.log(`Response Status: ${response.status} ${response.statusText}`);
       //console.log(`Response Body: ${responseText}`);

@@ -96,3 +96,32 @@ async function sendToLogQueue(env, logEntry) {
     isSendingLogs = false;
   }
 }
+
+// Inside fetchThreatIntelData function, after fetching the response
+const responseText = await response.text();
+console.log(`Response Status: ${response.status} ${response.statusText}`);
+console.log(`Response Body: ${responseText}`);
+
+// Correct date calculation
+if (lastFetchTime) {
+  const fromDateString = new Date(lastFetchTime).toISOString();
+  requestBody = { from: fromDateString };
+} else {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
+  requestBody = { from: thirtyDaysAgoString };
+}
+
+// Attempt to parse JSON if response is OK
+try {
+  if (response.ok) {
+    const responseData = JSON.parse(responseText);
+    data = responseData.response.Event || [];
+  } else {
+    throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
+  }
+} catch (error) {
+  console.error(`Error fetching ${type} data: ${error.message}`);
+  console.error(`Response Body: ${responseText}`);
+  // Rest of the error handling...
+}

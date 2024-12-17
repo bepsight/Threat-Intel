@@ -83,6 +83,8 @@ export default {
 
 // Function to fetch threat intel data
 async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
+  let response;      // Declare response in the outer scope
+  let responseText;  // Declare responseText in the outer scope
   try {
     console.log(`Fetching ${type} data from ${url}`);
     await sendToLogQueue(env, {
@@ -98,7 +100,8 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         const fromDateString = new Date(lastFetchTime).toISOString();
         requestBody = { from: fromDateString };
       } else {
-        const thirtyDaysAgoString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
         requestBody = { from: thirtyDaysAgoString };
       }
 
@@ -110,7 +113,8 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         message: `Using filters ${JSON.stringify(requestBody)} to fetch ${type} data from ${url}.`,
       });
 
-      const response = await fetch(url, {
+      // Make the fetch request
+      response = await fetch(url, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -120,12 +124,18 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         body: JSON.stringify(requestBody),
       });
 
-      if (!response.ok) {
+      // Read the response text
+      responseText = await response.text();
+      console.log(`Response Status: ${response.status} ${response.statusText}`);
+      console.log(`Response Body: ${responseText}`);
+
+      // Check if response is OK
+      if (response.ok) {
+        const responseData = JSON.parse(responseText);
+        data = responseData.response.Event || [];
+      } else {
         throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
       }
-
-      const responseData = await response.json();
-      data = responseData.response.Event || [];
     }
 
     console.log(`Successfully fetched ${data.length} ${type} items from ${url}`);
@@ -138,6 +148,9 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
     return data;
   } catch (error) {
     console.error(`Error fetching ${type} data: ${error.message}`);
+    if (responseText) {
+      console.error(`Response Body: ${responseText}`);
+    }
     // Log error
     await sendToLogQueue(env, {
       level: "error",

@@ -12,6 +12,6 @@
   "description": "",
   "dependencies": {
     "fauna": "^2.4.0",
-    "wrangler": "^3.96.0"
+    "wrangler": "^3.95.0"
   }
 }

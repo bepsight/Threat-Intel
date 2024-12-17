@@ -1,4 +1,4 @@
-name = "threat-intel"
+name = "threat-intel-ingest"
 main = "src/cloudflare/worker-threat-intel-ingest.js"
 account_id = "e1b28dfdcf5e79b14ae5ac2eb01cb89d"
 workers_dev = true

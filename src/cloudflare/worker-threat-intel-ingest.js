@@ -215,7 +215,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
     if (type === "misp") {
       let requestBody = {
-        limit: 50,
+        limit: 10,
         page: 1,
         includeAttributes: true,
         includeContext: true,
@@ -224,7 +224,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
       // Set 'from' date to 30 days ago
       const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 7);
       const fromDateString = thirtyDaysAgo.toISOString();
       requestBody.from = fromDateString;
 
@@ -266,12 +266,11 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         if (response.ok) {
           const responseData = JSON.parse(responseText);
 
-          if (responseData && responseData.response) {
-            if (Array.isArray(responseData.response)) {
-              allData = allData.concat(responseData.response);
-            } else {
-              allData.push(responseData.response);
-            }
+          if (responseData && responseData.response && responseData.response.length > 0) {
+            // Process and store data incrementally
+            const relevantIndicators = filterRelevantThreatIntel(responseData.response);
+            await storeInD1(env.DB, relevantIndicators, env);
+            await storeInFaunaDB(relevantIndicators, env.FAUNA_SECRET, env);
 
             // Check if there is more data to fetch
             if (responseData.response.length < requestBody.limit) {

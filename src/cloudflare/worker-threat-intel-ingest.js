@@ -261,6 +261,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
   }
 }
 
+
 // Function to filter relevant threat intel
 function filterRelevantThreatIntel(stixObjects) {
   console.log("Filtering relevant threat intel");
@@ -374,6 +375,8 @@ async function storeInD1(d1, data, env) {
     throw error;
   }
 }
+
+
 
 // Function to store data in FaunaDB
 async function storeInFaunaDB(data, fauna, env) {

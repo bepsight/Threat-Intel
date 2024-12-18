@@ -205,150 +205,120 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
   try {
     console.log(`Fetching ${type} data from ${url}`);
+    await sendToLogQueue(env, {
+      level: "info",
+      message: `Fetching ${type} data from ${url}.`,
+    });
+
+    let data = [];
+    let allData = [];
+
+    if (type === "misp") {
+      let requestBody = {
+        limit: 50,
+        page: 1,
+        includeAttributes: true,
+        includeContext: true,
+        returnFormat: "json",
+      };
+
+      // Set 'from' date to 30 days ago
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const fromDateString = thirtyDaysAgo.toISOString();
+      requestBody.from = fromDateString;
+
+      // Remove filters for types and tags to fetch all data
+      // requestBody.type and requestBody.tags are omitted
+
+      // Log the request body
       await sendToLogQueue(env, {
         level: "info",
-        message: `Fetching ${type} data from ${url}.`,
+        message: `Using request body: ${JSON.stringify(requestBody)}`,
       });
 
-      let data = [];
-      let allData = [];
-  if (type === "misp") {
-      let requestBody = {
-         limit: 50,
-          page: 1,
-          type: ["ip-src", "ip-dst", "vulnerability", "malware", "tool"],
-          tags: ["severity:critical", "severity:high"],
-         includeAttributes: true,
-          includeContext: true,
-          returnFormat: "json"
-      };
-       //Use time based filters if they are available to fetch only new data
-         if(lastFetchTime){
-          const fromDate = new Date(lastFetchTime);
-          const fromDateString= fromDate.toISOString();
-           requestBody.from = fromDateString;
-        }
-        else {
-          const thirtyDaysAgo = new Date();
-           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-           requestBody.from = thirtyDaysAgoString;
-       }
+      let hasMoreData = true;
 
-        // Log the filter parameters that will be used for data fetch
-         await sendToLogQueue(env, {
-             level: "info",
-             message: `Using filters ${JSON.stringify(requestBody)} to fetch ${type} data from ${url}.`,
-           });
-          let hasMoreData = true;
+      while (hasMoreData) {
+        console.log(`Fetching page ${requestBody.page}`);
 
-        while (hasMoreData) {
-          console.log(`Fetching page ${requestBody.page}`);
-
-          await sendToLogQueue(env, {
+        await sendToLogQueue(env, {
           level: "info",
           message: `Fetching page ${requestBody.page} from MISP`,
-           requestBody: { ...requestBody },
-          });
-          response = await fetch(url, {
-             method: 'POST',
-             headers: {
-               'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'Authorization': env.MISP_API_KEY , // Set the api key in authorization header,
-                "cf-worker": "true",
-                "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
-                "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN,
-                },
-                body: JSON.stringify(requestBody)
-          });
-              responseText = await response.text();
+          requestBody: { ...requestBody },
+        });
 
-               if (response.ok) {
-              const responseData = JSON.parse(responseText);
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            Authorization: env.MISP_API_KEY, // API key for MISP
+            "cf-worker": "true",
+            "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
+            "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN,
+          },
+          body: JSON.stringify(requestBody),
+        });
 
-                  if (responseData && responseData.response) {
-                    if (Array.isArray(responseData.response)) {
-                         for( const event of responseData.response){
-                          allData.push(event);
-                         }
+        responseText = await response.text();
 
-                    }
-                    else {
-                         allData.push(responseData.response);
-                    }
-                     if (responseData.response.length < requestBody.limit ) {
-                         hasMoreData = false;
-                     } else {
-                          requestBody.page += 1;
-                     }
+        if (response.ok) {
+          const responseData = JSON.parse(responseText);
 
-                  }
-                 else {
-                      hasMoreData = false;
-                 }
-
+          if (responseData && responseData.response) {
+            if (Array.isArray(responseData.response)) {
+              allData = allData.concat(responseData.response);
+            } else {
+              allData.push(responseData.response);
             }
-            else {
-                  await sendToLogQueue(env, {
-                       level: "error",
-                       message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                          responseBody: responseText,
-                 });
-                 throw new Error(
-                  `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                 );
-                }
-           }
-        data= allData;
-     }
 
-     if (type === "stix") {
-        if(lastFetchTime){
-          const response = await fetch(`${url}?modified_since=${lastFetchTime}`);
-           if (!response.ok) {
-             throw new Error(
-              `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-            );
-           }
-           const responseData = await response.json();
-         data = responseData.objects;
-
-        }
-        else{
-           const thirtyDaysAgo = new Date();
-           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-             const response = await fetch(`${url}?modified_since=${thirtyDaysAgoString}`);
-            if (!response.ok) {
-               throw new Error(
-                `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-             );
+            // Check if there is more data to fetch
+            if (responseData.response.length < requestBody.limit) {
+              hasMoreData = false;
+            } else {
+              requestBody.page += 1;
             }
-              const responseData = await response.json();
-           data = responseData.objects;
+          } else {
+            hasMoreData = false;
+          }
+        } else {
+          // Log error details
+          await sendToLogQueue(env, {
+            level: "error",
+            message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
+            responseBody: responseText,
+          });
+          throw new Error(
+            `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
+          );
         }
-     }
-      // Log that the fetching process has been finished successfully
-      await sendToLogQueue(env, {
-          level: "info",
-          message: `Successfully fetched ${type} data from ${url}.`,
-      });
-      // Return data
-      return data;
+      }
+
+      data = allData;
+    }
+
+    // Log the total number of events fetched
+    await sendToLogQueue(env, {
+      level: "info",
+      message: `Successfully fetched ${data.length} events from ${url}.`,
+    });
+
+    // Return the fetched data
+    return data;
   } catch (error) {
-      // Log error using the custom logging function
-        if (responseText) {
-            console.error(`Response Body: ${responseText}`);
-         }
-       await sendToLogQueue(env, {
-          level: "error",
-          message: `Error fetching ${type} data: ${error.message}`,
-           stack: error.stack, // Send the stack trace for better debugging
-      });
+    // Log error details
+    if (responseText) {
+      console.error(`Response Body: ${responseText}`);
+    }
+    await sendToLogQueue(env, {
+      level: "error",
+      message: `Error fetching ${type} data: ${error.message}`,
+      stack: error.stack,
+    });
 
-       throw error; // Re-throw the error so it will be handled outside of this function.
-   }
+    throw error;
+  }
 }
 
 // Function to filter relevant threat intel

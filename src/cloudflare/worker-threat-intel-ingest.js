@@ -198,7 +198,7 @@ export default {
 };
 
 
-//Function to fetch threat intel data
+//Function to fetch
 async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
   let response;
   let responseText;
@@ -255,7 +255,10 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
              headers: {
                'Accept': 'application/json',
                 'Content-Type': 'application/json',
-                'Authorization': env.MISP_API_KEY // Set the api key in authorization header
+                'Authorization': env.MISP_API_KEY , // Set the api key in authorization header,
+                "cf-worker": "true",
+                "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
+                "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN,
                 },
                 body: JSON.stringify(requestBody)
           });

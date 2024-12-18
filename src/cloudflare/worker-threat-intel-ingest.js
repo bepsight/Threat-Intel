@@ -98,6 +98,13 @@ export default {
 
         console.log(`Total threat intel items fetched: ${allThreatIntel.length}`);
 
+        // Log the total threat intel items fetched to Elastic
+        await sendToLogQueue(env, {
+          level: "info",
+          message: `Total threat intel items fetched: ${allThreatIntel.length}`,
+          fetchedData: allThreatIntel, // Log all fetched threat intel items
+        });
+
         const relevantIndicators = filterRelevantThreatIntel(allThreatIntel);
         console.log(`Relevant indicators extracted: ${relevantIndicators.length}`);
 

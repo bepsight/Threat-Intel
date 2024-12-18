@@ -265,20 +265,76 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 function filterRelevantThreatIntel(stixObjects) {
   console.log("Filtering relevant threat intel");
   const relevantIndicators = [];
-  stixObjects.forEach((object) => {
-    // Process MISP events
-    if (object && object.Attribute) {
-      object.Attribute.forEach((attr) => {
+  
+  stixObjects.forEach(object => {
+    // Process Indicators
+    if (object.type === "indicator" && object.pattern_type === "stix") {
+      // Match IPv4 addresses
+      const ipRegex = /\[ipv4-addr:value = '(.*?)'\]/;
+      const matchIP = object.pattern.match(ipRegex);
+      if (matchIP && matchIP[1]) {
         relevantIndicators.push({
-          type: attr.type,
-          value: attr.value,
-          category: attr.category,
-          timestamp: attr.timestamp,
-          comment: attr.comment,
+          type: 'ip',
+          value: matchIP[1],
+          labels: object.labels,
+          description: object.description,
+          timestamp: object.modified,
+          confidence: object.confidence,
         });
+      }
+      
+      // Match IPv6 addresses
+      const ipV6Regex = /\[ipv6-addr:value = '(.*?)'\]/;
+      const matchIPv6 = object.pattern.match(ipV6Regex);
+      if (matchIPv6 && matchIPv6[1]) {
+        relevantIndicators.push({
+          type: 'ip',
+          value: matchIPv6[1],
+          labels: object.labels,
+          description: object.description,
+          timestamp: object.modified,
+          confidence: object.confidence,
+        });
+      }
+    }
+    
+    // Extract Vulnerability Data
+    if (object.type === "vulnerability") {
+      const vulnerability = {
+        type: 'vulnerability',
+        cve: object.external_references?.find(ref => ref.source_name === 'cve')?.external_id,
+        name: object.name,
+        description: object.description,
+        labels: object.labels,
+        modified: object.modified,
+      };
+      relevantIndicators.push(vulnerability);
+    }
+    
+    // Extract Software Data
+    if (object.type === "software") {
+      relevantIndicators.push({
+        type: 'software',
+        name: object.name,
+        cpe: object.cpe,
+        labels: object.labels,
+        description: object.description,
+        modified: object.modified,
+      });
+    }
+    
+    // Extract Malware and Tool Data
+    if (object.type === "malware" || object.type === "tool") {
+      relevantIndicators.push({
+        type: object.type,
+        name: object.name,
+        labels: object.labels,
+        description: object.description,
+        modified: object.modified,
       });
     }
   });
+  
   console.log(`Filtered ${relevantIndicators.length} relevant indicators`);
   return relevantIndicators;
 }

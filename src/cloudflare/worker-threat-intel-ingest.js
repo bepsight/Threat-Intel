@@ -216,6 +216,13 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
           const events = responseData.response || [];
           allData = allData.concat(events);
 
+          // Log fetched data to Elastic
+          await sendToLogQueue(env, {
+            level: "info",
+            message: `Fetched data from MISP`,
+            fetchedData: events,
+          });
+
           // Check if more data is available
           if (events.length < requestBody.limit) {
             hasMoreData = false;
@@ -260,7 +267,6 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
     throw error;
   }
 }
-
 
 // Function to filter relevant threat intel
 function filterRelevantThreatIntel(stixObjects) {

@@ -167,23 +167,19 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
     let data = [];
     if (type === "misp") {
 
-      //let requestBody = {};
-       // Define initial request body with limit and page
-       let requestBody = {
-        from: fromDateString,
+      // Define initial request body with limit and page
+      let requestBody = {
         limit: 100,     // Number of records per request
         page: 1         // Starting page
       };
-      
-      if (lastFetchTime) {
-        const fromDateString = new Date(lastFetchTime).toISOString();
-        requestBody = { from: fromDateString };
-      } else {
-        const thirtyDaysAgoString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-        requestBody = { from: thirtyDaysAgoString };
-      }
 
-     
+      let fromDateString;
+      if (lastFetchTime) {
+        fromDateString = new Date(lastFetchTime).toISOString();
+      } else {
+        fromDateString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      }
+      requestBody.from = fromDateString;
 
       console.log(`Request body: ${JSON.stringify(requestBody)}`);
 
@@ -195,7 +191,6 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         "cf-worker": "true",
         "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
         "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN
-
       };
 
       // Log request details

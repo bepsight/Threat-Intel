@@ -155,8 +155,7 @@ export default {
 async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
   let response;
   let responseText;
-  let headers;
-  
+
   try {
     console.log(`Fetching ${type} data from ${url}`);
     await sendToLogQueue(env, {
@@ -166,50 +165,44 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
     let data = [];
     if (type === "misp") {
+      let fromDateString = lastFetchTime
+        ? new Date(lastFetchTime).toISOString()
+        : new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(); // Adjust date range as needed
 
-      // Define initial request body with limit and page
+      // Initialize requestBody with required parameters
       let requestBody = {
-        limit: 100,     // Number of records per request
-        page: 1         // Starting page
+        from: fromDateString,
+        limit: 50,                // Adjust limit to a smaller number if needed
+        page: 1,
+        returnFormat: 'json',
+        metadata: true,           // Retrieve event metadata only
+        // requested_attributes: ['Event.id', 'Event.info', 'Event.date'], // Optional
       };
-
-      let fromDateString;
-      if (lastFetchTime) {
-        fromDateString = new Date(lastFetchTime).toISOString();
-      } else {
-        fromDateString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      }
-      requestBody.from = fromDateString;
 
       console.log(`Request body: ${JSON.stringify(requestBody)}`);
 
-      // Define headers before use
-      headers = {
+      // Define headers
+      const headers = {
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: env.MISP_API_KEY,
         "cf-worker": "true",
         "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
-        "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN
+        "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN,
       };
-
-      // Log request details
-      await sendToLogQueue(env, {
-        level: "info",
-        message: "Request details",
-        headers: JSON.stringify(headers),
-        body: JSON.stringify(requestBody),
-        url: url
-      });
 
       let allData = [];
       let hasMoreData = true;
 
       while (hasMoreData) {
-        // Update the page number in the request body
-        requestBody.page = requestBody.page || 1;
+        console.log(`Fetching page ${requestBody.page}`);
 
-        // Make the API request
+        await sendToLogQueue(env, {
+          level: "info",
+          message: `Fetching page ${requestBody.page} from MISP`,
+          requestBody: { ...requestBody },
+        });
+
         response = await fetch(url, {
           method: "POST",
           headers,
@@ -220,55 +213,44 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
         if (response.ok) {
           const responseData = JSON.parse(responseText);
-          const events = responseData.response.Event || [];
+          const events = responseData.response || [];
           allData = allData.concat(events);
 
           // Check if more data is available
           if (events.length < requestBody.limit) {
-            hasMoreData = false; // No more data to fetch
+            hasMoreData = false;
           } else {
-            requestBody.page += 1; // Fetch next page
+            requestBody.page += 1;
           }
         } else {
+          // Log the error details
+          await sendToLogQueue(env, {
+            level: "error",
+            message: `Failed to fetch page ${requestBody.page}`,
+            status: `Response Status: ${response.status} ${response.statusText}`,
+            responseBody: responseText,
+          });
+
           throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
         }
       }
 
       data = allData;
 
-      console.log(`Response Status: ${response.status} ${response.statusText}`);
-      //console.log(`Response Body: ${responseText}`);
-
+      // Log total events fetched
+      console.log(`Total events fetched: ${data.length}`);
       await sendToLogQueue(env, {
         level: "info",
-        message: `Received Response from ${type} endpoint ${url} `,
-        status: `Response Status: ${response.status} ${response.statusText}`,
-        responseBody: `Response Body: ${responseText}`,
+        message: `Successfully fetched ${data.length} events from MISP.`,
       });
-
-
-      if (response.ok) {
-        const responseData = JSON.parse(responseText);
-        data = responseData.response.Event || [];
-      } else {
-        throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
-      }
     }
 
-    console.log(`Successfully fetched ${data.length} ${type} items from ${url}`);
-
-    // Log successful fetch
-    await sendToLogQueue(env, {
-      level: "info",
-      message: `Successfully fetched ${type} data from ${url}.`,
-    });
     return data;
   } catch (error) {
     console.error(`Error fetching ${type} data: ${error.message}`);
     if (responseText) {
       console.error(`Response Body: ${responseText}`);
     }
-    // Log error
     await sendToLogQueue(env, {
       level: "error",
       message: `Error fetching ${type} data: ${error.message}`,

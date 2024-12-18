@@ -211,18 +211,21 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
     let data = [];
     if (type === "misp") {
-      let fromDateString = lastFetchTime
+      // Adjust date range as needed
+      const fromDateString = lastFetchTime
         ? new Date(lastFetchTime).toISOString()
-        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // Adjust date range as needed
+        : new Date(Date.now() - 30 * 24 * 24 * 60 * 60 * 1000).toISOString();
 
       // Initialize requestBody with required parameters
-      let requestBody = {
+      const requestBody = {
         from: fromDateString,
-        limit: 50,                // Adjust limit to a smaller number if needed
+        includeAttributes: true,       // Include detailed attributes
+        includeContext: true,          // Include additional context
+        returnFormat: "json",
+        limit: 50,                     // Adjust limit as needed
         page: 1,
-        returnFormat: 'json',
-        metadata: true,           // Retrieve event metadata only
-        // requested_attributes: ['Event.id', 'Event.info', 'Event.date'], // Optional
+        type: ["ip-src", "ip-dst", "vulnerability"],
+        tags: ["severity:critical", "severity:high"],
       };
 
       console.log(`Request body: ${JSON.stringify(requestBody)}`);
@@ -277,7 +280,9 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
             responseBody: responseText,
           });
 
-          throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
+          throw new Error(
+            `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
+          );
         }
       }
 
@@ -309,79 +314,56 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 }
 
 // Function to filter relevant threat intel
-function filterRelevantThreatIntel(stixObjects) {
+function filterRelevantThreatIntel(events) {
   console.log("Filtering relevant threat intel");
   const relevantIndicators = [];
-  
-  stixObjects.forEach(object => {
-    // Process Indicators
-    if (object.type === "indicator" && object.pattern_type === "stix") {
-      // Match IPv4 addresses
-      const ipRegex = /\[ipv4-addr:value = '(.*?)'\]/;
-      const matchIP = object.pattern.match(ipRegex);
-      if (matchIP && matchIP[1]) {
-        relevantIndicators.push({
-          type: 'ip',
-          value: matchIP[1],
-          labels: object.labels,
-          description: object.description,
-          timestamp: object.modified,
-          confidence: object.confidence,
-        });
-      }
-      
-      // Match IPv6 addresses
-      const ipV6Regex = /\[ipv6-addr:value = '(.*?)'\]/;
-      const matchIPv6 = object.pattern.match(ipV6Regex);
-      if (matchIPv6 && matchIPv6[1]) {
-        relevantIndicators.push({
-          type: 'ip',
-          value: matchIPv6[1],
-          labels: object.labels,
-          description: object.description,
-          timestamp: object.modified,
-          confidence: object.confidence,
-        });
-      }
-    }
-    
-    // Extract Vulnerability Data
-    if (object.type === "vulnerability") {
-      const vulnerability = {
-        type: 'vulnerability',
-        cve: object.external_references?.find(ref => ref.source_name === 'cve')?.external_id,
-        name: object.name,
-        description: object.description,
-        labels: object.labels,
-        modified: object.modified,
-      };
-      relevantIndicators.push(vulnerability);
-    }
-    
-    // Extract Software Data
-    if (object.type === "software") {
-      relevantIndicators.push({
-        type: 'software',
-        name: object.name,
-        cpe: object.cpe,
-        labels: object.labels,
-        description: object.description,
-        modified: object.modified,
-      });
-    }
-    
-    // Extract Malware and Tool Data
-    if (object.type === "malware" || object.type === "tool") {
-      relevantIndicators.push({
-        type: object.type,
-        name: object.name,
-        labels: object.labels,
-        description: object.description,
-        modified: object.modified,
+
+  events.forEach(event => {
+    // Process each attribute in the event
+    if (event.Attribute && Array.isArray(event.Attribute)) {
+      event.Attribute.forEach(attribute => {
+        // Check if the attribute type matches
+        if (["ip-src", "ip-dst"].includes(attribute.type)) {
+          relevantIndicators.push({
+            type: 'ip',
+            value: attribute.value,
+            category: attribute.category,
+            comment: attribute.comment,
+            timestamp: attribute.timestamp,
+            tags: attribute.Tag ? attribute.Tag.map(tag => tag.name) : [],
+          });
+        } else if (attribute.type === "vulnerability") {
+          relevantIndicators.push({
+            type: 'vulnerability',
+            cve: attribute.value,
+            category: attribute.category,
+            comment: attribute.comment,
+            timestamp: attribute.timestamp,
+            tags: attribute.Tag ? attribute.Tag.map(tag => tag.name) : [],
+          });
+        } else if (attribute.type === "malware") {
+          relevantIndicators.push({
+            type: 'malware',
+            name: attribute.value,
+            category: attribute.category,
+            comment: attribute.comment,
+            timestamp: attribute.timestamp,
+            tags: attribute.Tag ? attribute.Tag.map(tag => tag.name) : [],
+          });
+        } else if (attribute.type === "tool") {
+          relevantIndicators.push({
+            type: 'tool',
+            name: attribute.value,
+            category: attribute.category,
+            comment: attribute.comment,
+            timestamp: attribute.timestamp,
+            tags: attribute.Tag ? attribute.Tag.map(tag => tag.name) : [],
+          });
+        }
       });
     }
   });
-  
+
   console.log(`Filtered ${relevantIndicators.length} relevant indicators`);
   return relevantIndicators;
 }

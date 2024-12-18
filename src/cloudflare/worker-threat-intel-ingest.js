@@ -184,7 +184,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         Authorization: env.MISP_API_KEY,
         "cf-worker": "true",
         "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
-        "CF-Access-Client-Secret": env.CF_ACCESS_CLIENT_SECRET
+        "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN
 
       };
 

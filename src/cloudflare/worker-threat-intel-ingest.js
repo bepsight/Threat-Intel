@@ -63,10 +63,10 @@ export default {
 
       console.log(`[INFO] Processing ${request.method} request to ${url.pathname}`);
       
-      if (!isCronRequest && !isMispFetchRequest) {
-        console.log("[WARN] Invalid endpoint accessed");
-        return new Response("This endpoint is for fetching MISP data", { status: 404 });
-      }
+      //if (!isCronRequest && !isMispFetchRequest) {
+      //  console.log("[WARN] Invalid endpoint accessed");
+      //  return new Response("This endpoint is for fetching MISP data", { status: 404 });
+     // }
 
       let response;      // Declare 'response' here
       let responseText;  // Declare 'responseText' here

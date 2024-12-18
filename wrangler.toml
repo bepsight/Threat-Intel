@@ -11,6 +11,9 @@ compatibility_date = "2023-08-01"
 
 [vars]
 MISP_API_KEY = "R2uokB95AfDSczhx0qmcAeTRRJ8CVv0CbbJIGMhs"
+CF_ACCESS_CLIENT_ID = "8ba784aa2ffe6ef9216d21b937044e21.access"
+CF_ACCESS_SERVICE_TOKEN = "CF-Access-Client-Secret: ef37a74a6c4746b8c4b94e2c9ea4effcad982ed35ea6d8f856c78847f80e27dc"
+
 
 [[queues.producers]]
 queue = "threat-intel-log-queue"

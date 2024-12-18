@@ -182,7 +182,10 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: env.MISP_API_KEY,
-        "cf-worker": "true"
+        "cf-worker": "true",
+        "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
+        "CF-Access-Client-Secret": env.CF_ACCESS_CLIENT_SECRET,
+
       };
 
       // Log request details

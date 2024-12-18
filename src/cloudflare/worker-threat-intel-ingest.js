@@ -224,7 +224,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
       // Set 'from' date to 30 days ago
       const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 7);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 1);
       const fromDateString = thirtyDaysAgo.toISOString();
       requestBody.from = fromDateString;
 

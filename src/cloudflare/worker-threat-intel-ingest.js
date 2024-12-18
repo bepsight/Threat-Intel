@@ -167,7 +167,7 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
     if (type === "misp") {
       let fromDateString = lastFetchTime
         ? new Date(lastFetchTime).toISOString()
-        : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(); // Adjust date range as needed
+        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // Adjust date range as needed
 
       // Initialize requestBody with required parameters
       let requestBody = {

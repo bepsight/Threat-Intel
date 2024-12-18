@@ -166,7 +166,15 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
 
     let data = [];
     if (type === "misp") {
-      let requestBody = {};
+
+      //let requestBody = {};
+       // Define initial request body with limit and page
+       let requestBody = {
+        from: fromDateString,
+        limit: 100,     // Number of records per request
+        page: 1         // Starting page
+      };
+      
       if (lastFetchTime) {
         const fromDateString = new Date(lastFetchTime).toISOString();
         requestBody = { from: fromDateString };
@@ -174,6 +182,8 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         const thirtyDaysAgoString = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         requestBody = { from: thirtyDaysAgoString };
       }
+
+     
 
       console.log(`Request body: ${JSON.stringify(requestBody)}`);
 
@@ -197,13 +207,40 @@ async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
         url: url
       });
 
-      response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-      });
+      let allData = [];
+      let hasMoreData = true;
 
-      responseText = await response.text();
+      while (hasMoreData) {
+        // Update the page number in the request body
+        requestBody.page = requestBody.page || 1;
+
+        // Make the API request
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+        });
+
+        responseText = await response.text();
+
+        if (response.ok) {
+          const responseData = JSON.parse(responseText);
+          const events = responseData.response.Event || [];
+          allData = allData.concat(events);
+
+          // Check if more data is available
+          if (events.length < requestBody.limit) {
+            hasMoreData = false; // No more data to fetch
+          } else {
+            requestBody.page += 1; // Fetch next page
+          }
+        } else {
+          throw new Error(`Failed to fetch ${type} data: ${response.status} ${response.statusText}`);
+        }
+      }
+
+      data = allData;
+
       console.log(`Response Status: ${response.status} ${response.statusText}`);
       //console.log(`Response Body: ${responseText}`);
 

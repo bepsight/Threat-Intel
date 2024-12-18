@@ -102,8 +102,47 @@ export default {
         await sendToLogQueue(env, {
           level: "info",
           message: `Total threat intel items fetched: ${allThreatIntel.length}`,
-          fetchedData: allThreatIntel, // Log all fetched threat intel items
         });
+
+        // Function to send data in batches
+        async function sendDataInBatches(env, dataArray, batchSizeInBytes = 120000) {
+          let currentBatch = [];
+          let currentBatchSize = 0;
+
+          for (const item of dataArray) {
+            const itemString = JSON.stringify(item);
+            const itemSize = new TextEncoder().encode(itemString).length;
+
+            // If adding this item exceeds the batch size limit, send the current batch
+            if (currentBatchSize + itemSize > batchSizeInBytes) {
+              await sendToLogQueue(env, {
+                level: "info",
+                message: `Threat intel items batch`,
+                data: currentBatch,
+              });
+
+              // Reset the batch
+              currentBatch = [];
+              currentBatchSize = 0;
+            }
+
+            // Add the item to the current batch
+            currentBatch.push(item);
+            currentBatchSize += itemSize;
+          }
+
+          // Send any remaining items in the last batch
+          if (currentBatch.length > 0) {
+            await sendToLogQueue(env, {
+              level: "info",
+              message: `Threat intel items batch`,
+              data: currentBatch,
+            });
+          }
+        }
+
+        // Use the function to send all threat intel items
+        await sendDataInBatches(env, allThreatIntel);
 
         const relevantIndicators = filterRelevantThreatIntel(allThreatIntel);
         console.log(`Relevant indicators extracted: ${relevantIndicators.length}`);

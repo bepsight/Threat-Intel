@@ -3,7 +3,7 @@ import { sendToLogQueue } from "../utils/log.js"; // Import custom log function
 
 export default {
   async fetch(request, env, ctx) {
-    const d1 = env.MY_D1; // Get D1 binding from environment
+    const d1 = env.THREAT_INTEL_DB; // Get D1 binding from environment
     const fauna = new Client({
       secret: env.FAUNA_SECRET, // Get Fauna secret from environment
     });
@@ -42,7 +42,7 @@ async function fetchThreatIntelData(env, type) {
   let response;
   let responseText;
   let data = [];
-  const d1 = env.MY_D1; // D1 binding from environment
+  const d1 = env.THREAT_INTEL_DB; // D1 binding from environment
 
   try {
     let url = '';
@@ -432,7 +432,7 @@ async function updateLastFetchTime(d1, sourceUrl, fetchTime, env) {
 }
 
 async function processAndStoreData(env, data, type, url, lastFetchTime) {
-  const d1 = env.MY_D1; // D1 binding from environment
+  const d1 = env.THREAT_INTEL_DB; // D1 binding from environment
   const fauna = new Client({
     secret: env.FAUNA_SECRET,
   });

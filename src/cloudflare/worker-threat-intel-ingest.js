@@ -113,7 +113,7 @@ async function fetchThreatIntelData(env, d1, type) {
       data = allData;
 
     } else if (type === 'nvd') {
-      url = 'https://services.nvd.nist.gov/rest/json/cves/1.0/';
+      url = 'https://services.nvd.nist.gov/rest/json/cves/2.0/';
       lastFetchTime = await getLastFetchTime(d1, url, env);
 
       let hasMoreData = true;

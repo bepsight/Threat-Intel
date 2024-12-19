@@ -105,6 +105,8 @@ export default {
 };
 
 
+
+
 async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
     let response;
     let responseText;

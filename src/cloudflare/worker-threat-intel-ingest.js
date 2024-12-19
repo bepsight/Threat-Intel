@@ -23,9 +23,7 @@ export default {
         // Fetch RSS data
         await fetchThreatIntelData(env, d1, 'rss');
         return new Response('RSS data fetched successfully.', { status: 200 });
-      } else {
-        return new Response('Endpoint not found.', { status: 404 });
-      }
+      } 
     } catch (error) {
       // Log the error
       await sendToLogQueue(env, {

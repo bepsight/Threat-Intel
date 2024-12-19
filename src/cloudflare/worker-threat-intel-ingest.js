@@ -430,3 +430,56 @@ async function updateLastFetchTime(d1, sourceUrl, fetchTime, env) {
        throw error;
     }
 }
+
+async function processAndStoreData(env, data, type, url, lastFetchTime) {
+  const d1 = env.MY_D1; // D1 binding from environment
+  const fauna = new Client({
+    secret: env.FAUNA_SECRET,
+  });
+
+  try {
+    let processedData = [];
+
+    // Process data based on feed type
+    if (type === 'misp') {
+      // For MISP data, apply filtering for STIX type feeds
+      const relevantIndicators = filterRelevantThreatIntel(data);
+      processedData = relevantIndicators;
+      console.log(`Processed ${relevantIndicators.length} relevant indicators from MISP feed.`);
+    } else if (type === 'nvd') {
+      // For NVD data, process as needed
+      processedData = data; // Assuming data is already in desired format
+      console.log(`Processed ${data.length} vulnerabilities from NVD feed.`);
+    } else if (type === 'rss') {
+      // For RSS data, process as needed
+      processedData = data; // Assuming data is already in desired format
+      console.log(`Processed ${data.length} items from RSS feed.`);
+    } else {
+      throw new Error(`Unsupported feed type: ${type}`);
+    }
+
+    // Store processed data in D1
+    if (processedData.length > 0) {
+      await storeInD1(d1, processedData, env);
+      await storeInFaunaDB(processedData, fauna, env);
+    } else {
+      console.log('No data to store after processing.');
+    }
+
+    // Update last fetch time in D1
+    const fetchTime = new Date().toISOString();
+    await updateLastFetchTime(d1, url, fetchTime, env);
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Successfully processed and stored data from ${type} feed.`,
+    });
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error processing data from ${type} feed: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}

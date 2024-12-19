@@ -13,15 +13,15 @@ export default {
     try {
       if (url.pathname === '/fetchmisp') {
         // Fetch MISP data
-        await fetchThreatIntelData(env, 'misp');
+        await fetchThreatIntelData(env, d1, 'misp');
         return new Response('MISP data fetched successfully.', { status: 200 });
       } else if (url.pathname === '/fetchnvd') {
         // Fetch NVD data
-        await fetchThreatIntelData(env, 'nvd');
+        await fetchThreatIntelData(env, d1, 'nvd');
         return new Response('NVD data fetched successfully.', { status: 200 });
       } else if (url.pathname === '/fetchrss') {
         // Fetch RSS data
-        await fetchThreatIntelData(env, 'rss');
+        await fetchThreatIntelData(env, d1, 'rss');
         return new Response('RSS data fetched successfully.', { status: 200 });
       } else {
         return new Response('Endpoint not found.', { status: 404 });
@@ -38,23 +38,16 @@ export default {
   },
 };
 
-async function fetchThreatIntelData(env, type) {
+async function fetchThreatIntelData(env, d1, type) {
   let response;
   let responseText;
   let data = [];
-  const d1 = env.THREAT_INTEL_DB; // D1 binding from environment
 
   try {
     let url = '';
     let lastFetchTime = null;
     let allData = [];
-    await sendToLogQueue(env, {
-      level: "info",
-      message: `Fetching ${type} data from ${url}.`,
-     });
 
-
-    // Set URL and other parameters based on feed type
     if (type === 'misp') {
       url = 'https://simp.xsight.network/events/restSearch';
       lastFetchTime = await getLastFetchTime(d1, url, env);
@@ -182,6 +175,8 @@ async function fetchThreatIntelData(env, type) {
 
     } else if (type === 'rss') {
       url = 'https://your-rss-feed-url.com/rss';
+      lastFetchTime = null;
+
       await sendToLogQueue(env, {
         level: 'info',
         message: `Fetching RSS data from ${url}.`,
@@ -220,7 +215,7 @@ async function fetchThreatIntelData(env, type) {
     }
 
     // Process and store data
-    await processAndStoreData(env, data, type, url, lastFetchTime);
+    await processAndStoreData(env, d1, data, type, url, lastFetchTime);
 
     await sendToLogQueue(env, {
       level: 'info',
@@ -379,60 +374,64 @@ async function storeInFaunaDB(data, fauna, env) {
     }
 }
 
-async function getLastFetchTime(d1, sourceUrl, env) {
+async function getLastFetchTime(d1, resourceUrl, env) {
   try {
     const { results } = await d1
-      .prepare("SELECT last_fetch_time FROM tracker WHERE id = ?")
-      .bind(sourceUrl)
+      .prepare("SELECT last_fetch_time FROM fetch_stats WHERE resource_url = ?")
+      .bind(resourceUrl)
       .all();
 
     if (results && results.length > 0 && results[0].last_fetch_time) {
-        await sendToLogQueue(env, {
-           level: "info",
-            message: `Last fetch time found for source: ${sourceUrl}. Time: ${results[0].last_fetch_time}.`,
-          });
-         return results[0].last_fetch_time;
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: `Last fetch time found for resource: ${resourceUrl}. Time: ${results[0].last_fetch_time}.`,
+      });
+      return results[0].last_fetch_time;
     }
 
     await sendToLogQueue(env, {
-        level: "info",
-        message: `Last fetch time not found for source: ${sourceUrl}. Returning null.`,
-      });
-    return null; // Return null if no previous fetch time is available.
+      level: 'info',
+      message: `Last fetch time not found for resource: ${resourceUrl}. Returning null.`,
+    });
+    return null;
   } catch (error) {
-     await sendToLogQueue(env, {
-        level: "error",
-        message: `Error getting last fetch time from D1 for source: ${sourceUrl}. ${error.message}`,
-         stack: error.stack,
-      });
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error getting last fetch time from D1 for resource: ${resourceUrl}. ${error.message}`,
+      stack: error.stack,
+    });
     throw error;
   }
 }
 
-async function updateLastFetchTime(d1, sourceUrl, fetchTime, env) {
-    try {
-         await d1
-          .prepare(
-            "INSERT OR REPLACE INTO tracker (id, last_fetch_time) VALUES (?, ?)"
-          )
-          .bind(sourceUrl, fetchTime)
-           .run();
-           await sendToLogQueue(env, {
-            level: "info",
-            message: `Last fetch time updated in D1 for source: ${sourceUrl}. Time: ${fetchTime}.`,
-        });
-    } catch (error) {
-        await sendToLogQueue(env, {
-            level: "error",
-            message: `Error updating last fetch time in D1 for source: ${sourceUrl}. ${error.message}`,
-            stack: error.stack,
-        });
-       throw error;
-    }
+async function updateLastFetchTime(d1, resourceUrl, fetchTime, env) {
+  try {
+    await d1
+      .prepare(
+        `INSERT INTO fetch_stats (resource_url, last_fetch_time, fetch_count)
+         VALUES (?, ?, COALESCE((SELECT fetch_count FROM fetch_stats WHERE resource_url = ?) + 1, 1))
+         ON CONFLICT(resource_url) DO UPDATE SET
+           last_fetch_time = excluded.last_fetch_time,
+           fetch_count = fetch_stats.fetch_count + 1`
+      )
+      .bind(resourceUrl, fetchTime, resourceUrl)
+      .run();
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Last fetch time updated in D1 for resource: ${resourceUrl}. Time: ${fetchTime}.`,
+    });
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error updating last fetch time in D1 for resource: ${resourceUrl}. ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
 }
 
-async function processAndStoreData(env, data, type, url, lastFetchTime) {
-  const d1 = env.THREAT_INTEL_DB; // D1 binding from environment
+async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
   const fauna = new Client({
     secret: env.FAUNA_SECRET,
   });

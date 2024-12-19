@@ -8,359 +8,233 @@ export default {
       secret: env.FAUNA_SECRET, // Get Fauna secret from environment
     });
 
-    // 1. Check if this request is triggered by a cron schedule, or it is for the /fetchmisp endpoint
-    const isCronRequest = ctx.scheduledTime !== undefined; // Detect if the request is scheduled
-    const isMispFetchRequest = request.url.endsWith("/fetchmisp");
+    const url = new URL(request.url);
 
-    // if this request is not related to fetching misp data, return
-    if (!isCronRequest && !isMispFetchRequest) {
-      return new Response("This endpoint is for fetching MISP data", {
-        status: 404,
-      });
-    }
     try {
-      // Log that the fetching process has started using the custom log function
-      await sendToLogQueue(env, {
-        level: "info",
-        message: "Starting threat intel fetching process.",
-      });
-
-      // Define the different feeds that you want to fetch, can be MISP or other sources.
-      const threatIntelFeeds = [
-          //{
-          //  type: "misp",
-          //  url: "https://simp.xsight.network/events/restSearch",
-          //  format: "misp",
-          //},
-           {
-            type: "nvd",
-            url: "https://services.nvd.nist.gov/rest/json/cves/2.0",
-            format: "nvd",
-          },
-          {
-            type: "rss",
-            url: "https://api.rss.app/v1/feeds", // Using feeds to access list of feeds in rss app.
-            format: "rss",
-          }
-      ];
-
-      let allThreatIntel = [];
-      for (const feed of threatIntelFeeds) {
-          console.log(`Fetching data from feed ${feed.type}: ${feed.url}`);
-        const feedData = await fetchThreatIntelData(
-          feed.url,
-          feed.type,
-          env,
-          feed.format
-        );
-          console.log(`Fetched ${feedData.length} items from feed ${feed.type}: ${feed.url}`);
-        allThreatIntel = [...allThreatIntel, ...feedData];
-      }
-          console.log(`Total threat intel items fetched: ${allThreatIntel.length}`);
-
-      // Log the total threat intel items fetched to Elastic
-      await sendToLogQueue(env, {
-        level: "info",
-        message: `Total threat intel items fetched: ${allThreatIntel.length}`,
-      });
-
-      if (type === "stix") {
-        const relevantIndicators = filterRelevantThreatIntel(allThreatIntel);
-        console.log(`Relevant indicators extracted: ${relevantIndicators.length}`);
-        // Proceed with relevantIndicators
-        // e.g., store in database
-        await storeInD1(env.DB, relevantIndicators, env);
-        await storeInFaunaDB(relevantIndicators, env.FAUNA_SECRET, env);
+      if (url.pathname === '/fetchmisp') {
+        // Fetch MISP data
+        await fetchThreatIntelData(env, 'misp');
+        return new Response('MISP data fetched successfully.', { status: 200 });
+      } else if (url.pathname === '/fetchnvd') {
+        // Fetch NVD data
+        await fetchThreatIntelData(env, 'nvd');
+        return new Response('NVD data fetched successfully.', { status: 200 });
+      } else if (url.pathname === '/fetchrss') {
+        // Fetch RSS data
+        await fetchThreatIntelData(env, 'rss');
+        return new Response('RSS data fetched successfully.', { status: 200 });
       } else {
-        // For other feed types, use allThreatIntel as is
-        console.log(`Processing ${allThreatIntel.length} items from ${type} feed`);
-        // Proceed with allThreatIntel data
-        await storeInD1(env.DB, allThreatIntel, env);
-        await storeInFaunaDB(allThreatIntel, env.FAUNA_SECRET, env);
+        return new Response('Endpoint not found.', { status: 404 });
       }
-
-      await sendToLogQueue(env, {
-        level: "info",
-        message: "Threat intel data ingestion finished successfully.",
-      });
-      console.log("Threat intel data ingestion finished successfully");
-
-      return new Response("Threat intel data ingestion finished successfully.", {
-        status: 200,
-      });
     } catch (error) {
-      // Send error log using custom logging function
+      // Log the error
       await sendToLogQueue(env, {
-        level: "error",
-        message: `Error fetching/processing threat intel data: ${error.message}`,
-        stack: error.stack, // Send the stack trace for better debugging
+        level: 'error',
+        message: `Error fetching data: ${error.message}`,
+        stack: error.stack,
       });
-      // Return an error response with the error message
-      return new Response(
-        `Error fetching/processing threat intel data: ${error.message}`,
-        { status: 500 }
-      );
+      return new Response(`Error: ${error.message}`, { status: 500 });
     }
   },
 };
 
+async function fetchThreatIntelData(env, type) {
+  let response;
+  let responseText;
+  let data = [];
+  const d1 = env.MY_D1; // D1 binding from environment
 
-async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
-    let response;
-    let responseText;
+  try {
+    let url = '';
+    let lastFetchTime = null;
+    let allData = [];
+    await sendToLogQueue(env, {
+      level: "info",
+      message: `Fetching ${type} data from ${url}.`,
+     });
 
-    try {
-      // Log the data fetching process
-        await sendToLogQueue(env, {
-            level: "info",
-            message: `Fetching ${type} data from ${url}.`,
-        });
 
-      let allData = [];
-     ///////////////////////////
-     // Process MISP DATA
-     if (type === "misp") {
-       // Same MISP logic as before
-         let requestBody = {
-           limit: 50,
-            page: 1,
-           includeAttributes: true,
-            includeContext: true,
-            returnFormat: "json"
-        };
-         //Use time based filters if they are available to fetch only new data
-           if(lastFetchTime){
-            const fromDate = new Date(lastFetchTime);
-            const fromDateString= fromDate.toISOString();
-             requestBody.from = fromDateString;
-          }
-          else {
-            const thirtyDaysAgo = new Date();
-             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-             requestBody.from = thirtyDaysAgoString;
-          }
+    // Set URL and other parameters based on feed type
+    if (type === 'misp') {
+      url = 'https://simp.xsight.network/events/restSearch';
+      lastFetchTime = await getLastFetchTime(d1, url, env);
 
-          // Log the filter parameters that will be used for data fetch
-           await sendToLogQueue(env, {
-               level: "info",
-               message: `Using filters ${JSON.stringify(requestBody)} to fetch ${type} data from ${url}.`,
-             });
-            let hasMoreData = true;
-           while(hasMoreData){
-              console.log(`Fetching page ${requestBody.page}`);
-              await sendToLogQueue(env, {
-                level: "info",
-                  message: `Fetching page ${requestBody.page} from MISP`,
-                 requestBody: { ...requestBody },
-              });
-             response = await fetch(url, {
-               method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                     'Authorization': env.MISP_API_KEY, // Set the api key in authorization header
-                      "cf-worker": "true",
-                      "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
-                      "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN,
+      let requestBody = {
+        limit: 50,
+        page: 1,
+        includeAttributes: true,
+        includeContext: true,
+        returnFormat: 'json',
+      };
 
-                 },
-                 body: JSON.stringify(requestBody)
-              });
-                 responseText = await response.text();
+      if (lastFetchTime) {
+        requestBody.from = new Date(lastFetchTime).toISOString();
+      } else {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        requestBody.from = thirtyDaysAgo.toISOString();
+      }
 
-                if(response.ok){
-                  const responseData = JSON.parse(responseText);
-                    if (responseData && responseData.response) {
-                       if (Array.isArray(responseData.response)) {
-                            for( const event of responseData.response){
-                             allData.push(event);
-                            }
-
-                       }
-                        else {
-                          allData.push(responseData.response);
-                       }
-                       if (responseData.response.length < requestBody.limit ) {
-                           hasMoreData= false;
-                       } else {
-                            requestBody.page += 1;
-                        }
-                     }
-                   else {
-                          hasMoreData = false;
-                      }
-
-                 }
-                else {
-                    await sendToLogQueue(env, {
-                        level: "error",
-                         message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                         responseBody: responseText,
-                    });
-                     throw new Error(
-                       `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                       );
-                }
-           }
-           data = allData;
-       }
-
-      ///////////////////////////
-      // Process NVD DATA
-       if (type === "nvd") {
       let hasMoreData = true;
-           let startIndex= 0;
-          let lastModStartDate= null;
-          let lastModEndDate= null;
-        if(lastFetchTime){
-          const lastFetchDate = new Date(lastFetchTime)
-            lastModStartDate= lastFetchDate.toISOString()
-            lastModEndDate = new Date().toISOString()
-
-         } else {
-            const thirtyDaysAgo = new Date();
-           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-             lastModStartDate = thirtyDaysAgo.toISOString();
-             lastModEndDate= new Date().toISOString()
-         }
-
-         while(hasMoreData){
-            let requestURL= `${url}?resultsPerPage=2000&startIndex=${startIndex}`
-              if(lastModStartDate && lastModEndDate){
-                 requestURL= `${requestURL}&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`
-              }
-            // Log the URL that will be used for data fetch.
-              await sendToLogQueue(env, {
-                 level: "info",
-                message: `Fetching ${type} data from ${requestURL}.`,
-               });
-            response= await fetch(requestURL, {
-              headers: {
-                 'Accept': 'application/json',
-                'apiKey': env.NVD_API_KEY //API key from environment variables (I am using for test purposes)
-                 },
-              })
-               responseText = await response.text();
-            if(response.ok){
-               const responseData = JSON.parse(responseText);
-                 if (responseData && responseData.vulnerabilities) {
-                   allData=  [...allData, ...responseData.vulnerabilities];
-                     startIndex= startIndex+ responseData.resultsPerPage
-                     if (startIndex >= responseData.totalResults) {
-                      hasMoreData = false;
-                      }
-                   }
-                  else {
-                   hasMoreData= false;
-                 }
-
-             }
-             else {
-                  await sendToLogQueue(env, {
-                    level: "error",
-                     message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                     responseBody: responseText,
-                   });
-                    throw new Error(
-                     `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                    );
-                }
-        }
-         data= allData;
-      }
-
-    ///////////////////////////
-    // Process RSS DATA
-     if (type === "rss") {
-          let requestURL= `${url}?limit=100`
-          // Log the URL that will be used for data fetch.
-            await sendToLogQueue(env, {
-                level: "info",
-                 message: `Fetching ${type} data from ${requestURL}.`,
-            });
-
-         response= await fetch(requestURL, {
-             method: 'GET',
-               headers: {
-                    'Accept': 'application/json',
-                     'Authorization': `Bearer ${env.RSS_API_KEY}:${env.RSS_API_SECRET}`
-                  }
-            })
-            if(response.ok){
-              const responseData = await response.json();
-              if(responseData && responseData.data && Array.isArray(responseData.data)){
-                     for(const feed of responseData.data){
-                        if(feed && feed.items && Array.isArray(feed.items)){
-                         allData= [...allData, ...feed.items];
-                         }
-                      }
-                  }
-
-             } else {
-                    await sendToLogQueue(env, {
-                        level: "error",
-                        message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                         responseBody: responseText,
-                   });
-                    throw new Error(
-                     `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                  );
-              }
-
-           data = allData;
-       }
-
-        ///////////////////////////
-        // Process STIX DATA
-        if (type === "stix") {
-          if(lastFetchTime){
-            const response = await fetch(`${url}?modified_since=${lastFetchTime}`);
-             if (!response.ok) {
-               throw new Error(
-                `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-              );
-             }
-             const responseData = await response.json();
-             allData = responseData.objects;
-          }
-          else{
-             const thirtyDaysAgo = new Date();
-             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-             const response = await fetch(`${url}?modified_since=${thirtyDaysAgoString}`);
-             if (!response.ok) {
-                throw new Error(
-                 `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-               );
-             }
-               const responseData = await response.json();
-            allData = responseData.objects;
-         }
-        data = allData;
-      }
-
-
-        // Log that the fetching process has been finished successfully
+      while (hasMoreData) {
         await sendToLogQueue(env, {
-            level: "info",
-            message: `Successfully fetched ${type} data from ${url}.`,
-        });
-        // Return data
-       return data;
-    } catch (error) {
-        // Log error using the custom logging function
-          if (responseText) {
-              console.error(`Response Body: ${responseText}`);
-           }
-         await sendToLogQueue(env, {
-            level: "error",
-            message: `Error fetching ${type} data: ${error.message}`,
-             stack: error.stack, // Send the stack trace for better debugging
+          level: 'info',
+          message: `Fetching page ${requestBody.page} from MISP`,
         });
 
-        throw error; // Re-throw the error so it will be handled outside of this function.
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': env.MISP_API_KEY,
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        responseText = await response.text();
+
+        if (response.ok) {
+          const responseData = JSON.parse(responseText);
+          if (responseData && responseData.response) {
+            if (Array.isArray(responseData.response)) {
+              allData.push(...responseData.response);
+            } else {
+              allData.push(responseData.response);
+            }
+            if (responseData.response.length < requestBody.limit) {
+              hasMoreData = false;
+            } else {
+              requestBody.page += 1;
+            }
+          } else {
+            hasMoreData = false;
+          }
+        } else {
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: `Failed to fetch misp data: ${response.status} ${response.statusText}`,
+            responseBody: responseText,
+          });
+          throw new Error(`Failed to fetch misp data: ${response.status} ${response.statusText}`);
+        }
+      }
+      data = allData;
+
+    } else if (type === 'nvd') {
+      url = 'https://services.nvd.nist.gov/rest/json/cves/1.0/';
+      lastFetchTime = await getLastFetchTime(d1, url, env);
+
+      let hasMoreData = true;
+      let startIndex = 0;
+      let lastModStartDate = null;
+      let lastModEndDate = null;
+
+      if (lastFetchTime) {
+        lastModStartDate = new Date(lastFetchTime).toISOString();
+        lastModEndDate = new Date().toISOString();
+      } else {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        lastModStartDate = thirtyDaysAgo.toISOString();
+        lastModEndDate = new Date().toISOString();
+      }
+
+      while (hasMoreData) {
+        let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
+        requestURL += `&modStartDate=${lastModStartDate}&modEndDate=${lastModEndDate}`;
+
+        await sendToLogQueue(env, {
+          level: 'info',
+          message: `Fetching NVD data from ${requestURL}.`,
+        });
+
+        response = await fetch(requestURL, {
+          headers: {
+            'Accept': 'application/json',
+            'apiKey': env.NVD_API_KEY,
+          },
+        });
+
+        responseText = await response.text();
+
+        if (response.ok) {
+          const responseData = JSON.parse(responseText);
+          if (responseData && responseData.vulnerabilities) {
+            allData.push(...responseData.vulnerabilities);
+            startIndex += responseData.resultsPerPage;
+            if (startIndex >= responseData.totalResults) {
+              hasMoreData = false;
+            }
+          } else {
+            hasMoreData = false;
+          }
+        } else {
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: `Failed to fetch nvd data: ${response.status} ${response.statusText}`,
+            responseBody: responseText,
+          });
+          throw new Error(`Failed to fetch nvd data: ${response.status} ${response.statusText}`);
+        }
+      }
+      data = allData;
+
+    } else if (type === 'rss') {
+      url = 'https://your-rss-feed-url.com/rss';
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: `Fetching RSS data from ${url}.`,
+      });
+
+      response = await fetch(`${url}?limit=100`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${env.RSS_API_KEY}:${env.RSS_API_SECRET}`,
+        },
+      });
+
+      responseText = await response.text();
+
+      if (response.ok) {
+        const responseData = JSON.parse(responseText);
+        if (responseData && responseData.data && Array.isArray(responseData.data)) {
+          for (const feed of responseData.data) {
+            if (feed && feed.items && Array.isArray(feed.items)) {
+              allData.push(...feed.items);
+            }
+          }
+        }
+        data = allData;
+      } else {
+        await sendToLogQueue(env, {
+          level: 'error',
+          message: `Failed to fetch rss data: ${response.status} ${response.statusText}`,
+          responseBody: responseText,
+        });
+        throw new Error(`Failed to fetch rss data: ${response.status} ${response.statusText}`);
+      }
+    } else {
+      throw new Error(`Unsupported feed type: ${type}`);
     }
+
+    // Process and store data
+    await processAndStoreData(env, data, type, url, lastFetchTime);
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Successfully fetched ${type} data from ${url}.`,
+    });
+
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error fetching ${type} data: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
 }
 
 // Function to filter relevant threat intel

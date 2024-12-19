@@ -40,3 +40,14 @@ command = "npm run build"
 
 [observability]
 enabled = true
+
+name = "threat-intel-ingest-worker"
+main = "worker-threat-intel-ingest.js"
+compatibility_date = "2023-10-24"
+
+[env.production]
+routes = [
+  "psight.network/fetchmisp",
+  "psight.network/fetchnvd",
+  "psight.network/fetchrss",
+]

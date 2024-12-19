@@ -133,7 +133,7 @@ async function fetchThreatIntelData(env, d1, type) {
 
       while (hasMoreData) {
         let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
-        requestURL += `&modStartDate=${lastModStartDate}&modEndDate=${lastModEndDate}`;
+        requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
 
         await sendToLogQueue(env, {
           level: 'info',

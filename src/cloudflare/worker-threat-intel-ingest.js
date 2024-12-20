@@ -177,107 +177,77 @@ function processVulnerabilityItem(item, env) {
     return processedItem;
 }
 
-async function storeVulnerabilitiesInFaunaDB(vulnerabilities,fauna, env) {
-  
-  //const fauna = new Client({secret: env.FAUNA_SECRET});
+async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
+  if (!vulnerabilities || !vulnerabilities.length) return;
 
+  console.log(`[FaunaDB] Processing ${vulnerabilities.length} items`);
+  await sendToLogQueue(env, {
+    level: 'info',
+    message: '[FaunaDB] Processing items',
+    data: { count: vulnerabilities.length }
+  });
+
+  // Ensure the collection exists
   try {
-    if (vulnerabilities.length === 0) {
+    console.log('[FaunaDB] Ensuring collection exists');
+    await fauna.query(
+      fql`
+        if (!Exists(Collection("RawVulnerabilities"))) {
+          CreateCollection({ name: "RawVulnerabilities" })
+        } else {
+          "collection_exists"
+        }
+      `
+    );
+  } catch (error) {
+    console.error('[FaunaDB] Fatal error ensuring collection:', error);
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: '[FaunaDB] Fatal error ensuring collection',
+      data: { error: error.message, stack: error.stack }
+    });
+    throw error;
+  }
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const vuln of vulnerabilities) {
+    try {
+      console.log(`[FaunaDB] Storing vulnerability: ${vuln.cve.id}`);
+      await fauna.query(
+        fql`
+          Create(Collection("RawVulnerabilities"), {
+            data: ${vuln}
+          })
+        `
+      );
+      successCount++;
+      console.log(`[FaunaDB] Successfully stored: ${vuln.cve.id}`);
       await sendToLogQueue(env, {
         level: 'info',
-        message: 'No vulnerabilities to store in FaunaDB.',
+        message: '[FaunaDB] Store success',
+        data: { cveId: vuln.cve.id }
       });
-      return;
-    }
-
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: `Storing ${vulnerabilities.length} vulnerabilities in FaunaDB.`,
-    });
-
-    // Ensure the collection and index exist
-    try {
-      console.log('[FaunaDB] Ensuring collection exists');
-      await fauna.query(
-          fql`
-            if (!Exists(Collection("Vulnerabilities"))) {
-              CreateCollection({ name: "Vulnerabilities" })
-            } else {
-              "collection_exists"
-            }
-          `
-      );
-
-      console.log('[FaunaDB] Ensuring index exists');
-        await fauna.query(
-            fql`
-              if (!Exists(Index("vulnerabilities_by_cveId"))) {
-                CreateIndex({
-                  name: "vulnerabilities_by_cveId",
-                  source: Collection("Vulnerabilities"),
-                  terms: [{ field: ['ref'] }], // Index on ref
-                  unique: true,
-                  values: [
-                    { field: ["cve", "id"] },
-                  ]
-                })
-              } else {
-                "index_exists"
-              }
-         `
-        );
-      }
-       catch (error) {
-             console.error('[FaunaDB] Fatal error ensuring collection/index:', error);
-           await sendToLogQueue(env, {
-            level: 'error',
-            message: '[FaunaDB] Fatal error ensuring collection/index',
-            data: { error: error.message, stack: error.stack }
-           });
-          throw error;
-        }
-
-    let successCount = 0;
-    let errorCount = 0;
-
-      for (const vuln of vulnerabilities) {
-          try {
-            const query_create = fql`Vulnerabilities.create({ data: ${vuln} })`;
-            await fauna.query(query_create);
-             successCount++;
-             console.log(`[FaunaDB] Successfully stored: ${vuln.cve_id}`);
-              await sendToLogQueue(env, {
-                  level: 'info',
-                message: '[FaunaDB] Store success',
-              data: { cveId : vuln.cve_id }
-           });
-
-          } catch (error) {
-              errorCount++;
-              console.error('[FaunaDB] Store error:', error);
-           await sendToLogQueue(env, {
-                 level: 'error',
-                  message: '[FaunaDB] Store error',
-                 data: {
-                   error: error.message,
-                    validationErrors: error.errors,
-                   stack: error.stack
-                  }
-            });
-        }
-     }
-      console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);
-    await sendToLogQueue(env, {
-          level: 'info',
-           message: 'FaunaDB batch complete',
-         data: { successCount, errorCount }
-        });
     } catch (error) {
-        await sendToLogQueue(env, {
-            level: "error",
-            message: `Error storing vulnerabilities in FaunaDB: ${error.message}`,
-            stack: error.stack,
-        });
-        throw error;
+      errorCount++;
+      console.error('[FaunaDB] Store error:', error);
+      await sendToLogQueue(env, {
+        level: 'error',
+        message: '[FaunaDB] Store error',
+        data: {
+          error: error.message,
+          validationErrors: error.errors,
+          stack: error.stack
+        }
+      });
     }
+  }
+
+  console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);
+  await sendToLogQueue(env, {
+    level: 'info',
+    message: 'FaunaDB batch complete',
+    data: { successCount, errorCount }
+  });
 }

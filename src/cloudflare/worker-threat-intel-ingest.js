@@ -152,42 +152,119 @@ async function fetchThreatIntelData(env, d1, type) {
 
         if (response.ok) {
           const responseData = JSON.parse(responseText);
-          if (responseData && responseData.vulnerabilities) {
-            // Process and store this batch immediately
-            const processedData = responseData.vulnerabilities.map((item) => {
-              const cveItem = item.cve;
-              const title = cveItem.cveMetadata.cveId;
-              const link = `https://nvd.nist.gov/vuln/detail/${title}`;
-              const description =
-                cveItem.descriptions && cveItem.descriptions.length > 0
-                  ? cveItem.descriptions[0].value
-                  : '';
-              const source = 'NVD';
-              const pub_date = cveItem.published
-                ? cveItem.published
-                : new Date().toISOString();
-              const fetched_at = new Date().toISOString();
+          
+          // Log raw response data
+          await sendToLogQueue(env, {
+            level: 'debug',
+            message: 'Raw NVD API response received',
+            data: {
+              totalResults: responseData.totalResults,
+              resultsPerPage: responseData.resultsPerPage,
+              startIndex: startIndex,
+              vulnerabilitiesCount: responseData.vulnerabilities?.length || 0
+            }
+          });
 
-              return {
-                title,
-                link,
-                description,
-                source,
-                pub_date,
-                fetched_at,
-              };
+          if (responseData && responseData.vulnerabilities) {
+            // Log sample of raw vulnerability data
+            await sendToLogQueue(env, {
+              level: 'debug',
+              message: 'Sample of raw vulnerability data',
+              data: responseData.vulnerabilities.slice(0, 2) // Log first 2 items
             });
 
-            // Store processed data in D1
-            await storeVulnerabilitiesInD1(d1, processedData, env);
+            const processedData = await Promise.all(
+              responseData.vulnerabilities.map(async (item) => {
+                // Check if item.cve is defined
+                if (!item.cve) {
+                  await sendToLogQueue(env, {
+                    level: 'warn',
+                    message: 'Missing cve property in item.',
+                    data: item,
+                  });
+                  return null; // Skip this item
+                }
+            
+                const cveItem = item.cve;
+            
+                // Check if cveItem.cveMetadata is defined
+                if (!cveItem.cveMetadata) {
+                  await sendToLogQueue(env, {
+                    level: 'warn',
+                    message: 'Missing cveMetadata property in cveItem.',
+                    data: cveItem,
+                  });
+                  return null; // Skip this item
+                }
+            
+                const title = cveItem.cveMetadata.cveId;
+                const link = `https://nvd.nist.gov/vuln/detail/${title}`;
+                const description =
+                  cveItem.descriptions && cveItem.descriptions.length > 0
+                    ? cveItem.descriptions[0].value
+                    : '';
+                const source = 'NVD';
+                const pub_date = cveItem.published
+                  ? cveItem.published
+                  : new Date().toISOString();
+                const fetched_at = new Date().toISOString();
+            
+                // Log each processed item
+                await sendToLogQueue(env, {
+                  level: 'debug',
+                  message: 'Processed vulnerability item',
+                  data: {
+                    original: item,
+                    processed: {
+                      title,
+                      link,
+                      description,
+                      source,
+                      pub_date,
+                      fetched_at
+                    }
+                  }
+                });
+            
+                return {
+                  title,
+                  link,
+                  description,
+                  source,
+                  pub_date,
+                  fetched_at,
+                };
+              })
+            ).then((results) => results.filter((vuln) => vuln !== null)); // Remove null entries
 
-            // Store in FaunaDB
-            await storeVulnerabilitiesInFaunaDB(processedData, env);
-
+            // Log processed batch stats
             await sendToLogQueue(env, {
               level: 'info',
-              message: `Processed and stored ${processedData.length} vulnerabilities from NVD feed.`,
+              message: 'Processed vulnerability batch statistics',
+              data: {
+                rawCount: responseData.vulnerabilities.length,
+                processedCount: processedData.length,
+                skippedCount: responseData.vulnerabilities.length - processedData.length
+              }
             });
+
+            if (processedData.length > 0) {
+              // Store processed data in D1
+              await storeVulnerabilitiesInD1(d1, processedData, env);
+
+              // Store in FaunaDB
+              await storeVulnerabilitiesInFaunaDB(processedData, env);
+
+              await sendToLogQueue(env, {
+                level: 'info',
+                message: `Processed and stored ${processedData.length} vulnerabilities from NVD feed.`,
+              });
+            } else {
+              await sendToLogQueue(env, {
+                level: 'info',
+                message: 'No valid vulnerabilities found in this batch.',
+              });
+            }
 
             // Update startIndex for next batch
             startIndex += responseData.resultsPerPage;
@@ -567,13 +644,12 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
       message: `Storing ${vulnerabilities.length} vulnerabilities in D1.`,
     });
 
-    const insertStatement = d1.prepare(
-      'INSERT OR IGNORE INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-
     for (const vuln of vulnerabilities) {
       try {
-        await insertStatement
+        await d1
+          .prepare(
+            'INSERT OR IGNORE INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
+          )
           .bind(
             vuln.title,
             vuln.link,
@@ -583,10 +659,10 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
             vuln.fetched_at
           )
           .run();
-      } catch (error) {
+      } catch (dbError) {
         await sendToLogQueue(env, {
           level: 'error',
-          message: `Error inserting vulnerability into D1: ${error.message}`,
+          message: `Error inserting vulnerability into D1: ${dbError.message}`,
           data: vuln,
         });
       }
@@ -599,7 +675,7 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error storing vulnerabilities in D1: ${error.message}`,
+      message: `Error in storeVulnerabilitiesInD1: ${error.message}`,
       stack: error.stack,
     });
     throw error;

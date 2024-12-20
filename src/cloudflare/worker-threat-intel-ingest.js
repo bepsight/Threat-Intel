@@ -163,8 +163,18 @@ function processVulnerabilityItem(item, env) {
     });
     return null;
   }
-  // Return the item as-is, or modify if needed
-  return item;
+
+  // Ensure consistent structure:
+    const processedItem = {
+        cve: {
+            id: item.cve.id,
+            // ... add other cve properties you need
+        },
+        // ... add other top-level properties from item that you require
+        sourceData: item, // Keep original data if needed for debugging
+    };
+
+    return processedItem;
 }
 
 async function storeVulnerabilitiesInFaunaDB(vulnerabilities,fauna, env) {

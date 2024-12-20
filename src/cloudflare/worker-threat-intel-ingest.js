@@ -196,8 +196,14 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
           CreateIndex({
             name: "vulnerabilities_by_cveId",
             source: Collection("Vulnerabilities"),
-            terms: [{ field: ["data", "cveId"] }],
-            unique: true
+            // Index on the document ref to ensure uniqueness:
+            terms: [{ field: ["ref"] }],
+            unique: true,
+            // Include cveId and the nested cve id as values for debugging
+            values: [
+              { field: ["data","cveId"] },
+              { field: ["data","sourceData","cve","id"] }
+            ]
           })
         } else {
           "index_exists"

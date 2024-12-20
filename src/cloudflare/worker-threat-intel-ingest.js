@@ -444,9 +444,32 @@ async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
       processedData = relevantIndicators;
       console.log(`Processed ${relevantIndicators.length} relevant indicators from MISP feed.`);
     } else if (type === 'nvd') {
-      // For NVD data, process as needed
-      processedData = data; // Assuming data is already in desired format
-      console.log(`Processed ${data.length} vulnerabilities from NVD feed.`);
+      // Process NVD data to match the vulnerabilities table schema
+      processedData = data.map((item) => {
+        const cveItem = item.cve;
+        const title = cveItem.cveMetadata.cveId;
+        const link = `https://nvd.nist.gov/vuln/detail/${cveItem.cveMetadata.cveId}`;
+        const description =
+          cveItem.descriptions && cveItem.descriptions.length > 0
+            ? cveItem.descriptions[0].value
+            : '';
+        const source = 'NVD';
+        const pub_date = cveItem.published
+          ? cveItem.published
+          : new Date().toISOString();
+        const fetched_at = new Date().toISOString();
+
+        return {
+          title,
+          link,
+          description,
+          source,
+          pub_date,
+          fetched_at,
+        };
+      });
+
+      console.log(`Processed ${processedData.length} vulnerabilities from NVD feed.`);
     } else if (type === 'rss') {
       // For RSS data, process as needed
       processedData = data; // Assuming data is already in desired format
@@ -457,8 +480,12 @@ async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
 
     // Store processed data in D1
     if (processedData.length > 0) {
-      await storeInD1(d1, processedData, env);
-      await storeInFaunaDB(processedData, fauna, env);
+      if (type === 'nvd') {
+        await storeVulnerabilitiesInD1(d1, processedData, env);
+      } else {
+        await storeInD1(d1, processedData, env);
+        await storeInFaunaDB(processedData, fauna, env);
+      }
     } else {
       console.log('No data to store after processing.');
     }
@@ -475,6 +502,39 @@ async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
     await sendToLogQueue(env, {
       level: 'error',
       message: `Error processing data from ${type} feed: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
+
+async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
+  try {
+    console.log('Storing vulnerabilities in D1');
+    for (const vuln of vulnerabilities) {
+      await d1
+        .prepare(
+          'INSERT INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+        .bind(
+          vuln.title,
+          vuln.link,
+          vuln.description,
+          vuln.source,
+          vuln.pub_date,
+          vuln.fetched_at
+        )
+        .run();
+    }
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: 'Vulnerabilities data stored in D1 successfully.',
+    });
+    console.log('Vulnerabilities stored in D1 successfully');
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error storing vulnerabilities in D1: ${error.message}`,
       stack: error.stack,
     });
     throw error;

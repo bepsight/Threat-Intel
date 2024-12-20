@@ -113,7 +113,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       await sendToLogQueue(env, {
         level: 'error',
         message: `Error inserting vulnerability into FaunaDB: ${error.message}`,
-        data: vuln,
+        data: { vuln, error: error.message },
       });
     }
   }

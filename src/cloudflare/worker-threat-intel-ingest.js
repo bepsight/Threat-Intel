@@ -118,18 +118,7 @@ async function fetchThreatIntelData(env, d1, type) {
                 data: item
               });
 
-              const processedItem = {
-                cveId: item.id || 'Unknown',
-                link: `https://nvd.nist.gov/vuln/detail/${item.id || 'Unknown'}`,
-                description: item.descriptions?.[0]?.value || '',
-                source: item.sourceIdentifier || 'NVD',
-                published: item.published || new Date().toISOString(),
-                lastModified: item.lastModified || new Date().toISOString(),
-                metrics: item.metrics || null,
-                weaknesses: item.weaknesses || null,
-                references: item.references || null,
-                fetched_at: new Date().toISOString()
-              };
+              const processedItem = await processVulnerabilityItem(item);
 
               // Log processed item
               await sendToLogQueue(env, {
@@ -540,27 +529,23 @@ async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
 
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
-    if (vulnerabilities.length === 0) {
+    if (!vulnerabilities?.length) {
       await sendToLogQueue(env, {
-        level: 'info',
-        message: 'No vulnerabilities to store in D1.',
+        level: 'warn',
+        message: 'No vulnerabilities to store',
+        data: { count: 0 }
       });
       return;
     }
 
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: `Storing ${vulnerabilities.length} vulnerabilities in D1.`,
-    });
-
-    const stmt = d1.prepare(`
+    const stmt = await d1.prepare(`
       INSERT INTO vulnerabilities (
-        cve_id, link, description, source_identifier,
-        published, last_modified, base_score, base_severity,
-        vector_string, cwe, ref_urls, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cve_id, description, source_identifier,
+        published, last_modified, base_score,
+        base_severity, vector_string, cwe,
+        ref_urls, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(cve_id) DO UPDATE SET
-        link = excluded.link,
         description = excluded.description,
         source_identifier = excluded.source_identifier,
         published = excluded.published,
@@ -569,58 +554,52 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
         base_severity = excluded.base_severity,
         vector_string = excluded.vector_string,
         cwe = excluded.cwe,
-        ref_urls = excluded.ref_urls,
-        created_at = excluded.created_at
+        ref_urls = excluded.ref_urls
     `);
 
     for (const vuln of vulnerabilities) {
       try {
-        // Extract CVSS metrics if available
-        const baseScore = vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || null;
-        const baseSeverity = vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity || null;
-        const vectorString = vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString || null;
-        // Extract CWE if available
-        const cwe = vuln.weaknesses?.[0]?.description?.[0]?.value || null;
-        // Extract reference URLs
-        const refUrls = JSON.stringify(vuln.references?.map(ref => ref.url) || []);
+        if (!vuln.cveId) {
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: 'Invalid vulnerability data',
+            data: { vuln }
+          });
+          continue;
+        }
 
         await stmt.bind(
           vuln.cveId,
-          vuln.link,
           vuln.description,
           vuln.source,
           vuln.published,
           vuln.lastModified,
-          baseScore,
-          baseSeverity,
-          vectorString,
-          cwe,
-          refUrls,
+          vuln.baseScore,
+          vuln.baseSeverity,
+          vuln.vectorString,
+          vuln.cwe,
+          vuln.refUrls,
           vuln.fetched_at
         ).run();
 
         await sendToLogQueue(env, {
           level: 'debug',
           message: `Stored vulnerability: ${vuln.cveId}`,
+          data: { vuln }
         });
       } catch (error) {
         await sendToLogQueue(env, {
           level: 'error',
           message: `Failed to store vulnerability: ${vuln.cveId}`,
-          error: error.message,
+          data: { error: error.message, vuln }
         });
       }
     }
-
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: 'Vulnerabilities stored in D1 successfully.',
-    });
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error storing vulnerabilities in D1: ${error.message}`,
-      stack: error.stack,
+      message: 'Error in storeVulnerabilitiesInD1',
+      data: { error: error.message, stack: error.stack }
     });
     throw error;
   }
@@ -670,4 +649,23 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, env) {
     });
     throw error;
   }
+}
+
+async function processVulnerabilityItem(item) {
+  const cveData = item.cve; // Access the cve object from item
+  
+  return {
+    cveId: cveData.id,
+    link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
+    description: cveData.descriptions?.find(d => d.lang === 'en')?.value || '',
+    source: cveData.sourceIdentifier,
+    published: cveData.published,
+    lastModified: cveData.lastModified,
+    baseScore: cveData.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore,
+    baseSeverity: cveData.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity,
+    vectorString: cveData.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString,
+    cwe: cveData.weaknesses?.[0]?.description?.[0]?.value,
+    refUrls: JSON.stringify(cveData.references?.map(ref => ref.url) || []),
+    fetched_at: new Date().toISOString()
+  };
 }

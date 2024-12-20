@@ -187,27 +187,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     data: { count: vulnerabilities.length }
   });
 
-  // Ensure the collection exists
-  try {
-    console.log('[FaunaDB] Ensuring collection exists');
-    await fauna.query(
-      fql`
-        if (!Exists(Collection("Vulnerabilities"))) {
-          CreateCollection({ name: "Vulnerabilities" })
-        } else {
-          "collection_exists"
-        }
-      `
-    );
-  } catch (error) {
-    console.error('[FaunaDB] Fatal error ensuring collection:', error);
-    await sendToLogQueue(env, {
-      level: 'error',
-      message: '[FaunaDB] Fatal error ensuring collection',
-      data: { error: error.message, stack: error.stack }
-    });
-    throw error;
-  }
+
 
   let successCount = 0;
   let errorCount = 0;
@@ -217,7 +197,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Storing vulnerability: ${vuln.cve.id}`);
       await fauna.query(
         fql`
-          Create(Collection("RawVulnerabilities"), {
+          Create(Collection("Vulnerabilities"), {
             data: ${vuln}
           })
         `

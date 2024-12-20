@@ -16,19 +16,14 @@ export default {
         await fetchThreatIntelData(env, d1, 'misp');
         return new Response('MISP data fetched successfully.', { status: 200 });
       } else if (url.pathname === '/fetchnvd') {
-        const nvdUrl = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
-        const data = await fetchThreatIntelData(nvdUrl, 'nvd', env, d1);
-        if (!data) {
-          return new Response('No data fetched', { status: 404 });
-        }
-        await processAndStoreData(env, d1, data, 'nvd', nvdUrl);
-        return new Response('NVD data processed successfully', { status: 200 });
+        // Fetch NVD data
+        await fetchThreatIntelData(env, d1, 'nvd');
+        return new Response('NVD data fetched successfully.', { status: 200 });
       } else if (url.pathname === '/fetchrss') {
         // Fetch RSS data
         await fetchThreatIntelData(env, d1, 'rss');
         return new Response('RSS data fetched successfully.', { status: 200 });
       } 
-      return new Response('Invalid endpoint', { status: 404 });
     } catch (error) {
       // Log the error
       await sendToLogQueue(env, {
@@ -41,251 +36,243 @@ export default {
   },
 };
 
-async function fetchThreatIntelData(url, type, env, format, lastFetchTime) {
+async function fetchThreatIntelData(env, d1, type) {
   let response;
   let responseText;
+  let data = [];
+  let data_retention_days = 5;
 
   try {
-      // Log the data fetching process
-        await sendToLogQueue(env, {
-            level: "info",
-            message: `Fetching ${type} data from ${url}.`,
-        });
-
+    let url = '';
+    let lastFetchTime = null;
     let allData = [];
 
-   if (type === "misp") {
-       // Same MISP logic as before
-         let requestBody = {
-           limit: 50,
-            page: 1,
-           includeAttributes: true,
-            includeContext: true,
-            returnFormat: "json"
-        };
-         //Use time based filters if they are available to fetch only new data
-           if(lastFetchTime){
-            const fromDate = new Date(lastFetchTime);
-            const fromDateString= fromDate.toISOString();
-             requestBody.from = fromDateString;
-          }
-          else {
-            const thirtyDaysAgo = new Date();
-             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-             requestBody.from = thirtyDaysAgoString;
-          }
+    if (type === 'misp') {
+      url = 'https://simp.xsight.network/events/restSearch';
+      lastFetchTime = await getLastFetchTime(d1, url, env);
 
-          // Log the filter parameters that will be used for data fetch
-           await sendToLogQueue(env, {
-               level: "info",
-               message: `Using filters ${JSON.stringify(requestBody)} to fetch ${type} data from ${url}.`,
-             });
-            let hasMoreData = true;
-           while(hasMoreData){
-              console.log(`Fetching page ${requestBody.page}`);
-              await sendToLogQueue(env, {
-                level: "info",
-                  message: `Fetching page ${requestBody.page} from MISP`,
-                 requestBody: { ...requestBody },
-              });
-             response = await fetch(url, {
-               method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                     'Authorization': env.MISP_API_KEY, // Set the api key in authorization header
-                      "cf-worker": "true",
-                      "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
-                      "CF-Access-Client-Secret": env.CF_ACCESS_SERVICE_TOKEN,
+      let requestBody = {
+        limit: 50,
+        page: 1,
+        includeAttributes: true,
+        includeContext: true,
+        returnFormat: 'json',
+      };
 
-                 },
-                 body: JSON.stringify(requestBody)
-              });
-                responseText = await response.text();
+      if (lastFetchTime) {
+        requestBody.from = new Date(lastFetchTime).toISOString();
+      } else {
+        const DaysAgo = new Date();
+        DaysAgo.setDate(DaysAgo.getDate() - data_retention_days);
+        requestBody.from = DaysAgo.toISOString();
+      }
 
-                if(response.ok){
-                  const responseData = JSON.parse(responseText);
-                    if (responseData && responseData.response) {
-                       if (Array.isArray(responseData.response)) {
-                            for( const event of responseData.response){
-                             allData.push(event);
-                            }
-
-                       }
-                       else {
-                            allData.push(responseData.response);
-                       }
-                        if (responseData.response.length < requestBody.limit ) {
-                             hasMoreData= false;
-                         } else {
-                            requestBody.page += 1;
-                        }
-                     }
-                   else {
-                          hasMoreData = false;
-                      }
-
-                 }
-                else {
-                    await sendToLogQueue(env, {
-                        level: "error",
-                         message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                         responseBody: responseText,
-                    });
-                     throw new Error(
-                       `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                       );
-                }
-           }
-           data = allData;
-       }
-       if (type === "nvd") {
-          let hasMoreData = true;
-           let startIndex= 0;
-          let lastModStartDate= null;
-          let lastModEndDate= null;
-         if(lastFetchTime){
-           const lastFetchDate = new Date(lastFetchTime)
-             lastModStartDate= lastFetchDate.toISOString()
-             lastModEndDate = new Date().toISOString()
-
-           }
-           else {
-              const thirtyDaysAgo = new Date();
-              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-              lastModStartDate= thirtyDaysAgo.toISOString();
-              lastModEndDate= new Date().toISOString()
-            }
-
-          while(hasMoreData){
-               let requestURL= `${url}?resultsPerPage=2000&startIndex=${startIndex}`
-               if(lastModStartDate && lastModEndDate){
-                 requestURL= `${requestURL}&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`
-               }
-            // Log the URL that will be used for data fetch.
-              await sendToLogQueue(env, {
-                  level: "info",
-                  message: `Fetching ${type} data from ${requestURL}.`,
-              });
-              response = await fetch(requestURL, {
-                headers: {
-                  'Accept': 'application/json',
-                   'apiKey': env.NVD_API_KEY //API key from environment variables (I am using for test purposes)
-                 },
-              });
-                responseText = await response.text();
-              if(response.ok){
-                 const responseData = JSON.parse(responseText);
-                 if (responseData && responseData.vulnerabilities) {
-                   allData= [...allData, ...responseData.vulnerabilities];
-                    startIndex = startIndex+ responseData.resultsPerPage;
-                  if (startIndex >= responseData.totalResults) {
-                       hasMoreData = false;
-                    }
-                 }
-                 else {
-                       hasMoreData= false;
-                 }
-              }
-                else {
-                    await sendToLogQueue(env, {
-                        level: "error",
-                        message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                        responseBody: responseText,
-                     });
-                      throw new Error(
-                        `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                     );
-               }
-          }
-        data = allData;
-        }
-
-     if (type === "rss") {
-          let requestURL= `${url}?limit=100`
-          // Log the URL that will be used for data fetch.
-          await sendToLogQueue(env, {
-              level: "info",
-                message: `Fetching ${type} data from ${requestURL}.`,
-          });
-        response = await fetch(requestURL, {
-             method: 'GET',
-               headers: {
-                   'Accept': 'application/json',
-                      'Authorization': `Bearer ${env.RSS_API_KEY}:${env.RSS_API_SECRET}`
-                    }
-              })
-          if(response.ok){
-             const responseData = await response.json();
-              if(responseData && responseData.data && Array.isArray(responseData.data)){
-                for(const feed of responseData.data){
-                  if(feed && feed.items && Array.isArray(feed.items)){
-                    allData= [...allData, ...feed.items];
-                    }
-                 }
-               }
-             } else {
-                  await sendToLogQueue(env, {
-                      level: "error",
-                      message: `Failed to fetch ${type} data: ${response.status} ${response.statusText}`,
-                      responseBody: responseText,
-                 });
-                 throw new Error(
-                      `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-                   );
-             }
-          data = allData;
-        }
-
-     if (type === "stix") {
-       if(lastFetchTime){
-            const response = await fetch(`${url}?modified_since=${lastFetchTime}`);
-             if (!response.ok) {
-               throw new Error(
-                `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-               );
-             }
-             const responseData = await response.json();
-             data = responseData.objects;
-           }
-          else{
-             const thirtyDaysAgo = new Date();
-             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-            const thirtyDaysAgoString = thirtyDaysAgo.toISOString();
-             const response = await fetch(`${url}?modified_since=${thirtyDaysAgoString}`);
-             if (!response.ok) {
-              throw new Error(
-                `Failed to fetch ${type} data: ${response.status} ${response.statusText}`
-               );
-            }
-              const responseData = await response.json();
-           data = responseData.objects;
-         }
-       }
-
-         // Log that the fetching process has been finished successfully
+      let hasMoreData = true;
+      while (hasMoreData) {
         await sendToLogQueue(env, {
-            level: "info",
-            message: `Successfully fetched ${type} data from ${url}.`,
-        });
-        // Return data
-      return allData;
-  } catch (error) {
-        // Log error using the custom logging function
-          if (responseText) {
-              console.error(`Response Body: ${responseText}`);
-           }
-         await sendToLogQueue(env, {
-            level: "error",
-            message: `Error fetching ${type} data: ${error.message}`,
-            stack: error.stack, // Send the stack trace for better debugging
+          level: 'info',
+          message: `Fetching page ${requestBody.page} from MISP`,
         });
 
-         throw error; // Re-throw the error so it will be handled outside of this function.
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': env.MISP_API_KEY,
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        responseText = await response.text();
+
+        if (response.ok) {
+          const responseData = JSON.parse(responseText);
+          if (responseData && responseData.response) {
+            if (Array.isArray(responseData.response)) {
+              allData.push(...responseData.response);
+            } else {
+              allData.push(responseData.response);
+            }
+            if (responseData.response.length < requestBody.limit) {
+              hasMoreData = false;
+            } else {
+              requestBody.page += 1;
+            }
+          } else {
+            hasMoreData = false;
+          }
+        } else {
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: `Failed to fetch misp data: ${response.status} ${response.statusText}`,
+            responseBody: responseText,
+          });
+          throw new Error(`Failed to fetch misp data: ${response.status} ${response.statusText}`);
+        }
+      }
+      data = allData;
+
+    } else if (type === 'nvd') {
+      url = 'https://services.nvd.nist.gov/rest/json/cves/2.0/';
+      lastFetchTime = await getLastFetchTime(d1, url, env);
+
+      let hasMoreData = true;
+      let startIndex = 0;
+      let lastModStartDate = null;
+      let lastModEndDate = null;
+
+      if (lastFetchTime) {
+        lastModStartDate = new Date(lastFetchTime).toISOString();
+        lastModEndDate = new Date().toISOString();
+      } else {
+        const DaysAgo = new Date();
+        DaysAgo.setDate(DaysAgo.getDate() - data_retention_days);
+        lastModStartDate = DaysAgo.toISOString();
+        lastModEndDate = new Date().toISOString();
+      }
+
+      while (hasMoreData) {
+        let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
+        requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
+
+        await sendToLogQueue(env, {
+          level: 'info',
+          message: `Fetching NVD data from ${requestURL}.`,
+        });
+
+        response = await fetch(requestURL, {
+          headers: {
+            'Accept': 'application/json',
+            'apiKey': env.NVD_API_KEY,
+          },
+        });
+
+        responseText = await response.text();
+
+        if (response.ok) {
+          const responseData = JSON.parse(responseText);
+          if (responseData && responseData.vulnerabilities) {
+            // Process and store this batch immediately
+            const processedData = responseData.vulnerabilities.map((item) => {
+              const cveItem = item.cve;
+              const title = cveItem.cveMetadata.cveId;
+              const link = `https://nvd.nist.gov/vuln/detail/${title}`;
+              const description =
+                cveItem.descriptions && cveItem.descriptions.length > 0
+                  ? cveItem.descriptions[0].value
+                  : '';
+              const source = 'NVD';
+              const pub_date = cveItem.published
+                ? cveItem.published
+                : new Date().toISOString();
+              const fetched_at = new Date().toISOString();
+
+              return {
+                title,
+                link,
+                description,
+                source,
+                pub_date,
+                fetched_at,
+              };
+            });
+
+            // Store processed data in D1
+            await storeVulnerabilitiesInD1(d1, processedData, env);
+
+            // Store in FaunaDB
+            await storeVulnerabilitiesInFaunaDB(processedData, env);
+
+            await sendToLogQueue(env, {
+              level: 'info',
+              message: `Processed and stored ${processedData.length} vulnerabilities from NVD feed.`,
+            });
+
+            // Update startIndex for next batch
+            startIndex += responseData.resultsPerPage;
+            if (startIndex >= responseData.totalResults) {
+              hasMoreData = false;
+            }
+          } else {
+            hasMoreData = false;
+          }
+        } else {
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: `Failed to fetch NVD data: ${response.status} ${response.statusText}`,
+            responseBody: responseText,
+          });
+          throw new Error(`Failed to fetch NVD data: ${response.status} ${response.statusText}`);
+        }
+      }
+
+      // Update last fetch time in D1
+      const fetchTime = new Date().toISOString();
+      await updateLastFetchTime(d1, url, fetchTime, env);
+
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: `Successfully fetched NVD data from ${url}.`,
+      });
+    } else if (type === 'rss') {
+      url = 'https://your-rss-feed-url.com/rss';
+      lastFetchTime = null;
+
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: `Fetching RSS data from ${url}.`,
+      });
+
+      response = await fetch(`${url}?limit=100`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${env.RSS_API_KEY}:${env.RSS_API_SECRET}`,
+        },
+      });
+
+      responseText = await response.text();
+
+      if (response.ok) {
+        const responseData = JSON.parse(responseText);
+        if (responseData && responseData.data && Array.isArray(responseData.data)) {
+          for (const feed of responseData.data) {
+            if (feed && feed.items && Array.isArray(feed.items)) {
+              allData.push(...feed.items);
+            }
+          }
+        }
+        data = allData;
+      } else {
+        await sendToLogQueue(env, {
+          level: 'error',
+          message: `Failed to fetch rss data: ${response.status} ${response.statusText}`,
+          responseBody: responseText,
+        });
+        throw new Error(`Failed to fetch rss data: ${response.status} ${response.statusText}`);
+      }
+    } else {
+      throw new Error(`Unsupported feed type: ${type}`);
     }
-}
 
+    // Process and store data
+    await processAndStoreData(env, d1, data, type, url, lastFetchTime);
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Successfully fetched ${type} data from ${url}.`,
+    });
+
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error fetching ${type} data: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
 
 // Function to filter relevant threat intel
 function filterRelevantThreatIntel(stixObjects) {
@@ -486,31 +473,80 @@ async function updateLastFetchTime(d1, resourceUrl, fetchTime, env) {
   }
 }
 
-async function processAndStoreData(env, d1, data, type, url) {
-  try {
-    if (type === 'nvd') {
-      const processedData = data.map(item => ({
-        cve_id: item.id,
-        source_identifier: item.sourceIdentifier,
-        published: item.published,
-        last_modified: item.lastModified,
-        description: item.descriptions?.[0]?.value,
-        base_score: item.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore,
-        base_severity: item.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity,
-        vector_string: item.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString,
-        cwe: item.weaknesses?.[0]?.description?.[0]?.value,
-        ref_urls: JSON.stringify(item.references?.map(ref => ref.url) || [])
-      }));
+async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
+  const fauna = new Client({
+    secret: env.FAUNA_SECRET,
+  });
 
-      await storeVulnerabilitiesInD1(d1, processedData, env);
-      return true;
+  try {
+    let processedData = [];
+
+    // Process data based on feed type
+    if (type === 'misp') {
+      // For MISP data, apply filtering for STIX type feeds
+      const relevantIndicators = filterRelevantThreatIntel(data);
+      processedData = relevantIndicators;
+      console.log(`Processed ${relevantIndicators.length} relevant indicators from MISP feed.`);
+    } else if (type === 'nvd') {
+      // Process NVD data to match the vulnerabilities table schema
+      processedData = data.map((item) => {
+        const cveItem = item.cve;
+        const title = cveItem.cveMetadata.cveId;
+        const link = `https://nvd.nist.gov/vuln/detail/${cveItem.cveMetadata.cveId}`;
+        const description =
+          cveItem.descriptions && cveItem.descriptions.length > 0
+            ? cveItem.descriptions[0].value
+            : '';
+        const source = 'NVD';
+        const pub_date = cveItem.published
+          ? cveItem.published
+          : new Date().toISOString();
+        const fetched_at = new Date().toISOString();
+
+        return {
+          title,
+          link,
+          description,
+          source,
+          pub_date,
+          fetched_at,
+        };
+      });
+
+      console.log(`Processed ${processedData.length} vulnerabilities from NVD feed.`);
+    } else if (type === 'rss') {
+      // For RSS data, process as needed
+      processedData = data; // Assuming data is already in desired format
+      console.log(`Processed ${data.length} items from RSS feed.`);
+    } else {
+      throw new Error(`Unsupported feed type: ${type}`);
     }
-    return false;
+
+    // Store processed data in D1
+    if (processedData.length > 0) {
+      if (type === 'nvd') {
+        await storeVulnerabilitiesInD1(d1, processedData, env);
+      } else {
+        await storeInD1(d1, processedData, env);
+        await storeInFaunaDB(processedData, fauna, env);
+      }
+    } else {
+      console.log('No data to store after processing.');
+    }
+
+    // Update last fetch time in D1
+    const fetchTime = new Date().toISOString();
+    await updateLastFetchTime(d1, url, fetchTime, env);
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Successfully processed and stored data from ${type} feed.`,
+    });
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error processing data: ${error.message}`,
-      stack: error.stack
+      message: `Error processing data from ${type} feed: ${error.message}`,
+      stack: error.stack,
     });
     throw error;
   }
@@ -518,51 +554,54 @@ async function processAndStoreData(env, d1, data, type, url) {
 
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
-    const stmt = d1.prepare(`
-      INSERT INTO vulnerabilities (
-        cve_id, source_identifier, published, last_modified,
-        description, base_score, base_severity, vector_string,
-        cwe, ref_urls
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(cve_id) DO UPDATE SET
-        last_modified = excluded.last_modified,
-        description = excluded.description,
-        base_score = excluded.base_score,
-        base_severity = excluded.base_severity,
-        vector_string = excluded.vector_string,
-        cwe = excluded.cwe,
-        ref_urls = excluded.ref_urls
-    `);
+    if (vulnerabilities.length === 0) {
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: 'No vulnerabilities to store in D1.',
+      });
+      return;
+    }
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Storing ${vulnerabilities.length} vulnerabilities in D1.`,
+    });
+
+    const insertStatement = d1.prepare(
+      'INSERT OR IGNORE INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
+    );
 
     for (const vuln of vulnerabilities) {
       try {
-        await stmt.bind(
-          vuln.cve_id,
-          vuln.source_identifier,
-          vuln.published,
-          vuln.last_modified,
-          vuln.description,
-          vuln.base_score,
-          vuln.base_severity,
-          vuln.vector_string,
-          vuln.cwe,
-          vuln.ref_urls
-        ).run();
-
-        await sendToLogQueue(env, {
-          level: 'debug',
-          message: `Stored: ${vuln.cve_id}`,
-          data: vuln
-        });
+        await insertStatement
+          .bind(
+            vuln.title,
+            vuln.link,
+            vuln.description,
+            vuln.source,
+            vuln.pub_date,
+            vuln.fetched_at
+          )
+          .run();
       } catch (error) {
         await sendToLogQueue(env, {
           level: 'error',
-          message: `Store failed: ${vuln.cve_id}`,
-          error: error.message
+          message: `Error inserting vulnerability into D1: ${error.message}`,
+          data: vuln,
         });
       }
     }
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: 'Vulnerabilities stored in D1 successfully.',
+    });
   } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error storing vulnerabilities in D1: ${error.message}`,
+      stack: error.stack,
+    });
     throw error;
   }
 }

@@ -4,6 +4,7 @@ import { sendToLogQueue } from "../utils/log.js";
 export default {
   async fetch(request, env) {
     const startTime = Date.now();
+    
     console.log('[Worker] Request received:', request.url);
     await sendToLogQueue(env, {
       level: 'info',
@@ -166,10 +167,9 @@ function processVulnerabilityItem(item, env) {
   return item;
 }
 
-async function storeVulnerabilitiesInFaunaDB(vulnerabilities, env) {
-  const fauna = new Client({
-    secret: env.FAUNA_SECRET,
-  });
+async function storeVulnerabilitiesInFaunaDB(vulnerabilities,fauna, env) {
+  
+  //const fauna = new Client({secret: env.FAUNA_SECRET});
 
   try {
     if (vulnerabilities.length === 0) {

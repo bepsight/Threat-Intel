@@ -16,14 +16,19 @@ export default {
         await fetchThreatIntelData(env, d1, 'misp');
         return new Response('MISP data fetched successfully.', { status: 200 });
       } else if (url.pathname === '/fetchnvd') {
-        // Fetch NVD data
-        await fetchThreatIntelData(env, d1, 'nvd');
-        return new Response('NVD data fetched successfully.', { status: 200 });
+        const nvdUrl = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
+        const data = await fetchThreatIntelData(nvdUrl, 'nvd', env, d1);
+        if (!data) {
+          return new Response('No data fetched', { status: 404 });
+        }
+        await processAndStoreData(env, d1, data, 'nvd', nvdUrl);
+        return new Response('NVD data processed successfully', { status: 200 });
       } else if (url.pathname === '/fetchrss') {
         // Fetch RSS data
         await fetchThreatIntelData(env, d1, 'rss');
         return new Response('RSS data fetched successfully.', { status: 200 });
       } 
+      return new Response('Invalid endpoint', { status: 404 });
     } catch (error) {
       // Log the error
       await sendToLogQueue(env, {
@@ -481,100 +486,44 @@ async function updateLastFetchTime(d1, resourceUrl, fetchTime, env) {
   }
 }
 
-async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
-  const fauna = new Client({
-      secret: env.FAUNA_SECRET,
-  });
-
+async function processAndStoreData(env, d1, data, type, url) {
   try {
-      let processedData = [];
+    if (type === 'nvd') {
+      const processedData = data.map(item => ({
+        cve_id: item.id,
+        source_identifier: item.sourceIdentifier,
+        published: item.published,
+        last_modified: item.lastModified,
+        description: item.descriptions?.[0]?.value,
+        base_score: item.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore,
+        base_severity: item.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity,
+        vector_string: item.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString,
+        cwe: item.weaknesses?.[0]?.description?.[0]?.value,
+        ref_urls: JSON.stringify(item.references?.map(ref => ref.url) || [])
+      }));
 
-     // Process data based on feed type
-    if (type === 'misp') {
-      // For MISP data, apply filtering for STIX type feeds
-      const relevantIndicators = filterRelevantThreatIntel(data);
-      processedData = relevantIndicators;
-        console.log(`Processed ${relevantIndicators.length} relevant indicators from MISP feed.`);
+      await storeVulnerabilitiesInD1(d1, processedData, env);
+      return true;
     }
-    else if (type === 'nvd') {
-          processedData = data.map((item) => {
-        if (!item.cve) {
-         return null
-        }
-      const cveItem= item.cve;
-        return {
-            cve_id: cveItem.id,
-            source_identifier: cveItem.sourceIdentifier || null,
-            published: cveItem.published || null,
-            last_modified: cveItem.lastModified || null,
-            description:
-              cveItem.descriptions && cveItem.descriptions.length > 0
-               ? cveItem.descriptions[0].value
-               : null,
-            base_score: cveItem.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || cveItem.metrics?.cvssMetricV2?.[0]?.cvssData?.baseScore || null,
-            base_severity: cveItem.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity || cveItem.metrics?.cvssMetricV2?.[0]?.baseSeverity || null,
-            vector_string: cveItem.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString || cveItem.metrics?.cvssMetricV2?.[0]?.vectorString || null,
-            cwe: cveItem.weaknesses?.[0]?.description?.[0]?.value || null,
-            ref_urls: JSON.stringify(item.references?.map(ref => ref.url) || [])
-         }
-          }).filter(vuln=> vuln != null);
-      console.log(`Processed ${processedData.length} vulnerabilities from NVD feed.`);
-    } else if (type === 'rss') {
-      // For RSS data, process as needed
-         processedData = data;
-       console.log(`Processed ${data.length} items from RSS feed.`);
-    }
-    else {
-      throw new Error(`Unsupported feed type: ${type}`);
-    }
-
-
-      // Store processed data in D1 and FaunaDB
-      if (processedData.length > 0) {
-            if (type === 'nvd') {
-                 await storeVulnerabilitiesInD1(d1, processedData, env);
-              await storeVulnerabilitiesInFaunaDB(processedData, env);
-               }
-            else {
-                   await storeInD1(d1, processedData, env);
-               await storeInFaunaDB(processedData, fauna, env);
-               }
-      } else {
-        console.log('No data to store after processing.');
-      }
-
-      // Update last fetch time in D1
-     const fetchTime = new Date().toISOString();
-    await updateLastFetchTime(d1, url, fetchTime, env);
-
-      await sendToLogQueue(env, {
-          level: "info",
-          message: `Successfully processed and stored data from ${type} feed.`,
-       });
-   } catch (error) {
-      await sendToLogQueue(env, {
-          level: "error",
-          message: `Error processing data from ${type} feed: ${error.message}`,
-          stack: error.stack,
-     });
-       throw error;
-   }
+    return false;
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error processing data: ${error.message}`,
+      stack: error.stack
+    });
+    throw error;
+  }
 }
 
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: `Starting to store ${vulnerabilities.length} vulnerabilities in D1`
-    });
-
     const stmt = d1.prepare(`
       INSERT INTO vulnerabilities (
-        cve_id, source_identifier, published, last_modified, 
-        description, base_score, base_severity, vector_string, 
+        cve_id, source_identifier, published, last_modified,
+        description, base_score, base_severity, vector_string,
         cwe, ref_urls
-      ) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(cve_id) DO UPDATE SET
         last_modified = excluded.last_modified,
         description = excluded.description,
@@ -587,50 +536,33 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
 
     for (const vuln of vulnerabilities) {
       try {
-         await stmt.bind(
-              vuln.cve_id || null,
-              vuln.source_identifier || null,
-              vuln.published || null,
-              vuln.last_modified || null,
-              vuln.description || null,
-              vuln.base_score || null,
-              vuln.base_severity || null,
-              vuln.vector_string || null,
-              vuln.cwe || null,
-              vuln.ref_urls || null
-            ).run();
+        await stmt.bind(
+          vuln.cve_id,
+          vuln.source_identifier,
+          vuln.published,
+          vuln.last_modified,
+          vuln.description,
+          vuln.base_score,
+          vuln.base_severity,
+          vuln.vector_string,
+          vuln.cwe,
+          vuln.ref_urls
+        ).run();
 
         await sendToLogQueue(env, {
           level: 'debug',
-          message: `Stored vulnerability ${vuln.cve_id}`,
-          data: {
-            cve_id: vuln.cve_id,
-            source: vuln.source_identifier,
-          },
+          message: `Stored: ${vuln.cve_id}`,
+          data: vuln
         });
       } catch (error) {
-         await sendToLogQueue(env, {
+        await sendToLogQueue(env, {
           level: 'error',
-          message: `Failed to store vulnerability`,
-          error: error.message,
-            data: vuln
+          message: `Store failed: ${vuln.cve_id}`,
+          error: error.message
         });
-       }
-    }
-
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: `Completed storing vulnerabilities in D1`,
-      data: {
-        total_processed: vulnerabilities.length
       }
-    });
+    }
   } catch (error) {
-    await sendToLogQueue(env, {
-      level: 'error',
-      message: 'Failed to prepare D1 statement',
-      error: error.message
-    });
     throw error;
   }
 }

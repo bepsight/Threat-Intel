@@ -47,73 +47,7 @@ async function fetchThreatIntelData(env, d1, type) {
     let lastFetchTime = null;
     let allData = [];
 
-    if (type === 'misp') {
-      url = 'https://simp.xsight.network/events/restSearch';
-      lastFetchTime = await getLastFetchTime(d1, url, env);
-
-      let requestBody = {
-        limit: 50,
-        page: 1,
-        includeAttributes: true,
-        includeContext: true,
-        returnFormat: 'json',
-      };
-
-      if (lastFetchTime) {
-        requestBody.from = new Date(lastFetchTime).toISOString();
-      } else {
-        const DaysAgo = new Date();
-        DaysAgo.setDate(DaysAgo.getDate() - data_retention_days);
-        requestBody.from = DaysAgo.toISOString();
-      }
-
-      let hasMoreData = true;
-      while (hasMoreData) {
-        await sendToLogQueue(env, {
-          level: 'info',
-          message: `Fetching page ${requestBody.page} from MISP`,
-        });
-
-        response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Authorization': env.MISP_API_KEY,
-          },
-          body: JSON.stringify(requestBody),
-        });
-
-        responseText = await response.text();
-
-        if (response.ok) {
-          const responseData = JSON.parse(responseText);
-          if (responseData && responseData.response) {
-            if (Array.isArray(responseData.response)) {
-              allData.push(...responseData.response);
-            } else {
-              allData.push(responseData.response);
-            }
-            if (responseData.response.length < requestBody.limit) {
-              hasMoreData = false;
-            } else {
-              requestBody.page += 1;
-            }
-          } else {
-            hasMoreData = false;
-          }
-        } else {
-          await sendToLogQueue(env, {
-            level: 'error',
-            message: `Failed to fetch misp data: ${response.status} ${response.statusText}`,
-            responseBody: responseText,
-          });
-          throw new Error(`Failed to fetch misp data: ${response.status} ${response.statusText}`);
-        }
-      }
-      data = allData;
-
-    } else if (type === 'nvd') {
+    if (type === 'nvd') {
       url = 'https://services.nvd.nist.gov/rest/json/cves/2.0/';
       lastFetchTime = await getLastFetchTime(d1, url, env);
 

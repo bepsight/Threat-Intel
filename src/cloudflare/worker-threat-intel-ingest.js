@@ -28,7 +28,6 @@ async function fetchNvdData(env, fauna) {
   let hasMoreData = true;
   let startIndex = 0;
 
-  // Example incremental approach
   const now = new Date();
   now.setDate(now.getDate() - 1);
   const lastModStartDate = now.toISOString();
@@ -98,7 +97,6 @@ function processVulnerabilityItem(item, env) {
     });
     return null;
   }
-  // Returns the entire JSON object as is
   return item;
 }
 
@@ -107,8 +105,9 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
 
   for (const vuln of vulnerabilities) {
     try {
-      // Insert into the "Vulnerabilities" collection.
-      const query_create = fql`Vulnerabilities.create({ data: ${vuln} })`;
+      // Wrap the entire item under a single field to avoid validation conflicts
+      const doc = { raw: vuln };
+      const query_create = fql`Vulnerabilities.create({ data: ${doc} })`;
       await fauna.query(query_create);
     } catch (error) {
       await sendToLogQueue(env, {

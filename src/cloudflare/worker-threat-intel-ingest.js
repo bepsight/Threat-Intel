@@ -138,7 +138,7 @@ async function fetchThreatIntelData(env, d1, type) {
 
         await sendToLogQueue(env, {
           level: 'info',
-          message: `Fetching NVD data from ${requestURL}.`,
+          message: `Fetching NVD data from ${requestURL}`,
         });
 
         response = await fetch(requestURL, {
@@ -152,36 +152,66 @@ async function fetchThreatIntelData(env, d1, type) {
 
         if (response.ok) {
           const responseData = JSON.parse(responseText);
-          if (responseData && responseData.vulnerabilities) {
-            // Process and store this batch immediately
-            const processedData = responseData.vulnerabilities.map((item) => {
-              // Since item has properties directly, use item.id, item.descriptions, etc.
-              const cveId = item.id || 'Unknown';
-              const link = `https://nvd.nist.gov/vuln/detail/${cveId}`;
-              const description =
-                item.descriptions && item.descriptions.length > 0
-                  ? item.descriptions[0].value
-                  : '';
-              const source = item.sourceIdentifier || 'NVD';
-              const published = item.published || new Date().toISOString();
-              const lastModified = item.lastModified || new Date().toISOString();
-              const metrics = item.metrics || null;
-              const weaknesses = item.weaknesses || null;
-              const references = item.references || null;
-              const fetched_at = new Date().toISOString();
 
-              return {
-                cveId,
-                link,
-                description,
-                source,
-                published,
-                lastModified,
-                metrics,
-                weaknesses,
-                references,
-                fetched_at,
+          // Log raw response metadata
+          await sendToLogQueue(env, {
+            level: 'debug',
+            message: 'NVD API Response Metadata',
+            data: {
+              format: responseData.format,
+              version: responseData.version,
+              timestamp: responseData.timestamp,
+              totalResults: responseData.totalResults,
+              resultsPerPage: responseData.resultsPerPage,
+              startIndex: responseData.startIndex
+            }
+          });
+
+          if (responseData && responseData.vulnerabilities) {
+            // Log first vulnerability as sample
+            await sendToLogQueue(env, {
+              level: 'debug',
+              message: 'Sample NVD Vulnerability Data',
+              data: responseData.vulnerabilities[0]
+            });
+
+            const processedData = responseData.vulnerabilities.map((item) => {
+              // Log each raw item before processing
+              await sendToLogQueue(env, {
+                level: 'debug',
+                message: 'Processing vulnerability item',
+                data: {
+                  id: item.id,
+                  sourceIdentifier: item.sourceIdentifier,
+                  published: item.published,
+                  descriptions: item.descriptions,
+                  metrics: item.metrics,
+                  weaknesses: item.weaknesses,
+                  references: item.references
+                }
+              });
+
+              const processedItem = {
+                cveId: item.id || 'Unknown',
+                link: `https://nvd.nist.gov/vuln/detail/${item.id || 'Unknown'}`,
+                description: item.descriptions?.[0]?.value || '',
+                source: item.sourceIdentifier || 'NVD',
+                published: item.published || new Date().toISOString(),
+                lastModified: item.lastModified || new Date().toISOString(),
+                metrics: item.metrics || null,
+                weaknesses: item.weaknesses || null,
+                references: item.references || null,
+                fetched_at: new Date().toISOString()
               };
+
+              // Log processed item
+              await sendToLogQueue(env, {
+                level: 'debug',
+                message: 'Processed vulnerability item',
+                data: processedItem
+              });
+
+              return processedItem;
             });
 
             // Store processed data in D1

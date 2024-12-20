@@ -136,9 +136,11 @@ async function fetchThreatIntelData(env, d1, type) {
         let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
         requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
 
+        // Log request
         await sendToLogQueue(env, {
           level: 'info',
-          message: `Fetching NVD data from ${requestURL}`,
+          message: 'NVD API Request',
+          data: { url: requestURL }
         });
 
         response = await fetch(requestURL, {
@@ -153,42 +155,23 @@ async function fetchThreatIntelData(env, d1, type) {
         if (response.ok) {
           const responseData = JSON.parse(responseText);
 
-          // Log raw response metadata
+          // Log raw response
           await sendToLogQueue(env, {
             level: 'debug',
-            message: 'NVD API Response Metadata',
-            data: {
-              format: responseData.format,
-              version: responseData.version,
-              timestamp: responseData.timestamp,
-              totalResults: responseData.totalResults,
-              resultsPerPage: responseData.resultsPerPage,
-              startIndex: responseData.startIndex
-            }
+            message: 'NVD Raw Response',
+            data: responseData
           });
 
-          if (responseData && responseData.vulnerabilities) {
-            // Log first vulnerability as sample
-            await sendToLogQueue(env, {
-              level: 'debug',
-              message: 'Sample NVD Vulnerability Data',
-              data: responseData.vulnerabilities[0]
-            });
-
-            const processedData = responseData.vulnerabilities.map((item) => {
-              // Log each raw item before processing
+          if (responseData?.vulnerabilities?.length > 0) {
+            // Process items sequentially instead of using map
+            const processedData = [];
+            
+            for (const item of responseData.vulnerabilities) {
+              // Log raw item
               await sendToLogQueue(env, {
                 level: 'debug',
-                message: 'Processing vulnerability item',
-                data: {
-                  id: item.id,
-                  sourceIdentifier: item.sourceIdentifier,
-                  published: item.published,
-                  descriptions: item.descriptions,
-                  metrics: item.metrics,
-                  weaknesses: item.weaknesses,
-                  references: item.references
-                }
+                message: 'Processing Vulnerability',
+                data: item
               });
 
               const processedItem = {
@@ -207,41 +190,35 @@ async function fetchThreatIntelData(env, d1, type) {
               // Log processed item
               await sendToLogQueue(env, {
                 level: 'debug',
-                message: 'Processed vulnerability item',
+                message: 'Processed Vulnerability',
                 data: processedItem
               });
 
-              return processedItem;
-            });
+              processedData.push(processedItem);
+            }
 
-            // Store processed data in D1
+            // Store processed data
             await storeVulnerabilitiesInD1(d1, processedData, env);
 
-            // Store in FaunaDB
-            await storeVulnerabilitiesInFaunaDB(processedData, env);
+            // Update pagination
+            startIndex += responseData.resultsPerPage;
+            hasMoreData = startIndex < responseData.totalResults;
 
+            // Log progress
             await sendToLogQueue(env, {
               level: 'info',
-              message: `Processed and stored ${processedData.length} vulnerabilities from NVD feed.`,
+              message: 'Batch Processing Complete',
+              data: {
+                processed: processedData.length,
+                total: responseData.totalResults,
+                remaining: responseData.totalResults - startIndex
+              }
             });
-
-            console.log('Sample item:', JSON.stringify(responseData.vulnerabilities[0], null, 2));
-
-            // Update startIndex for next batch
-            startIndex += responseData.resultsPerPage;
-            if (startIndex >= responseData.totalResults) {
-              hasMoreData = false;
-            }
           } else {
             hasMoreData = false;
           }
         } else {
-          await sendToLogQueue(env, {
-            level: 'error',
-            message: `Failed to fetch NVD data: ${response.status} ${response.statusText}`,
-            responseBody: responseText,
-          });
-          throw new Error(`Failed to fetch NVD data: ${response.status} ${response.statusText}`);
+          throw new Error(`NVD API Error: ${response.status} ${response.statusText}`);
         }
       }
 

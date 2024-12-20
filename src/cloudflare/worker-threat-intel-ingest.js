@@ -8,11 +8,13 @@ export default {
 
     try {
       if (url.pathname === '/fetchnvd') {
+        console.log('Fetching NVD data...');
         await fetchNvdData(env, fauna);
         return new Response('NVD data fetched successfully.', { status: 200 });
       }
       return new Response('Not Found', { status: 404 });
     } catch (error) {
+      console.error('Error fetching data:', error);
       await sendToLogQueue(env, {
         level: 'error',
         message: `Error fetching data: ${error.message}`,
@@ -38,6 +40,7 @@ async function fetchNvdData(env, fauna) {
       + `&startIndex=${startIndex}&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
 
     try {
+      console.log('Requesting URL:', requestURL);
       response = await fetch(requestURL, {
         headers: {
           'Accept': 'application/json',
@@ -46,6 +49,7 @@ async function fetchNvdData(env, fauna) {
       });
       if (!response.ok) {
         const errorBody = await response.text();
+        console.error('NVD API Error:', response.status, errorBody);
         await sendToLogQueue(env, {
           level: 'error',
           message: 'NVD API Error',
@@ -54,6 +58,7 @@ async function fetchNvdData(env, fauna) {
         break;
       }
     } catch (e) {
+      console.error('NVD API request failed:', e.message);
       await sendToLogQueue(env, {
         level: 'error',
         message: 'NVD API request failed',
@@ -82,6 +87,7 @@ async function fetchNvdData(env, fauna) {
     }
   }
 
+  console.log('Completed NVD fetch cycle.');
   await sendToLogQueue(env, {
     level: 'info',
     message: 'Completed NVD fetch cycle.',
@@ -90,6 +96,7 @@ async function fetchNvdData(env, fauna) {
 
 function processVulnerabilityItem(item, env) {
   if (!item?.cve?.id) {
+    console.warn('Skipping invalid CVE entry:', item);
     sendToLogQueue(env, {
       level: 'warn',
       message: 'Skipping invalid CVE entry',
@@ -107,6 +114,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     try {
       // Wrap the entire item under a single field to avoid validation conflicts
       const doc = { raw: vuln };
+      console.log('Inserting vulnerability into FaunaDB:', doc);
       await sendToLogQueue(env, {
         level: 'info',
         message: 'Inserting vulnerability into FaunaDB',
@@ -114,12 +122,14 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       });
       const query_create = fql`Vulnerabilities.create({ data: ${doc} })`;
       const result = await fauna.query(query_create);
+      console.log('FaunaDB insertion result:', result);
       await sendToLogQueue(env, {
         level: 'info',
         message: 'FaunaDB insertion result',
         data: result,
       });
     } catch (error) {
+      console.error('Error inserting vulnerability into FaunaDB:', error.message);
       await sendToLogQueue(env, {
         level: 'error',
         message: `Error inserting vulnerability into FaunaDB: ${error.message}`,
@@ -128,6 +138,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     }
   }
 
+  console.log('Vulnerabilities stored in FaunaDB successfully.');
   await sendToLogQueue(env, {
     level: 'info',
     message: 'Vulnerabilities stored in FaunaDB successfully.',

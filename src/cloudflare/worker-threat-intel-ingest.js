@@ -142,11 +142,11 @@ async function fetchThreatIntelData(env, d1, type) {
             
             for (const item of responseData.vulnerabilities) {
               // Log raw item
-              await sendToLogQueue(env, {
-                level: 'debug',
-                message: 'Processing Vulnerability',
-                data: item
-              });
+              //await sendToLogQueue(env, {
+              //  level: 'debug',
+              //  message: 'Processing Vulnerability',
+              //  data: item
+              //});
 
               const processedItem = processVulnerabilityItem(item);
               processedData.push(processedItem);

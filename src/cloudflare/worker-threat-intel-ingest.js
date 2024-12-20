@@ -191,7 +191,7 @@ async function fetchThreatIntelData(env, d1, type) {
 async function getLastFetchTime(d1, url, env) {
   try {
     const result = await d1.prepare(`
-      SELECT last_fetch_time FROM fetch_times WHERE url = ?
+      SELECT last_fetch_time FROM fetch_stats WHERE url = ?
     `).bind(url).first();
 
     if (result) {
@@ -300,7 +300,7 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
 async function updateLastFetchTime(d1, url, fetchTime, env) {
   try {
     await d1.prepare(`
-      INSERT INTO fetch_times (url, last_fetch_time)
+      INSERT INTO fetch_stats (url, last_fetch_time)
       VALUES (?, ?)
       ON CONFLICT(url) DO UPDATE SET
         last_fetch_time = excluded.last_fetch_time

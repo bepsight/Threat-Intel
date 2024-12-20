@@ -155,25 +155,31 @@ async function fetchThreatIntelData(env, d1, type) {
           if (responseData && responseData.vulnerabilities) {
             // Process and store this batch immediately
             const processedData = responseData.vulnerabilities.map((item) => {
-              const cveItem = item.cve;
-              const title = cveItem.cveMetadata.cveId;
-              const link = `https://nvd.nist.gov/vuln/detail/${title}`;
+              // Since item has properties directly, use item.id, item.descriptions, etc.
+              const cveId = item.id || 'Unknown';
+              const link = `https://nvd.nist.gov/vuln/detail/${cveId}`;
               const description =
-                cveItem.descriptions && cveItem.descriptions.length > 0
-                  ? cveItem.descriptions[0].value
+                item.descriptions && item.descriptions.length > 0
+                  ? item.descriptions[0].value
                   : '';
-              const source = 'NVD';
-              const pub_date = cveItem.published
-                ? cveItem.published
-                : new Date().toISOString();
+              const source = item.sourceIdentifier || 'NVD';
+              const published = item.published || new Date().toISOString();
+              const lastModified = item.lastModified || new Date().toISOString();
+              const metrics = item.metrics || null;
+              const weaknesses = item.weaknesses || null;
+              const references = item.references || null;
               const fetched_at = new Date().toISOString();
 
               return {
-                title,
+                cveId,
                 link,
                 description,
                 source,
-                pub_date,
+                published,
+                lastModified,
+                metrics,
+                weaknesses,
+                references,
                 fetched_at,
               };
             });
@@ -188,6 +194,8 @@ async function fetchThreatIntelData(env, d1, type) {
               level: 'info',
               message: `Processed and stored ${processedData.length} vulnerabilities from NVD feed.`,
             });
+
+            console.log('Sample item:', JSON.stringify(responseData.vulnerabilities[0], null, 2));
 
             // Update startIndex for next batch
             startIndex += responseData.resultsPerPage;
@@ -567,27 +575,61 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
       message: `Storing ${vulnerabilities.length} vulnerabilities in D1.`,
     });
 
-    const insertStatement = d1.prepare(
-      'INSERT OR IGNORE INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
-    );
+    const stmt = d1.prepare(`
+      INSERT INTO vulnerabilities (
+        cve_id, link, description, source_identifier,
+        published, last_modified, base_score, base_severity,
+        vector_string, cwe, ref_urls, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cve_id) DO UPDATE SET
+        link = excluded.link,
+        description = excluded.description,
+        source_identifier = excluded.source_identifier,
+        published = excluded.published,
+        last_modified = excluded.last_modified,
+        base_score = excluded.base_score,
+        base_severity = excluded.base_severity,
+        vector_string = excluded.vector_string,
+        cwe = excluded.cwe,
+        ref_urls = excluded.ref_urls,
+        created_at = excluded.created_at
+    `);
 
     for (const vuln of vulnerabilities) {
       try {
-        await insertStatement
-          .bind(
-            vuln.title,
-            vuln.link,
-            vuln.description,
-            vuln.source,
-            vuln.pub_date,
-            vuln.fetched_at
-          )
-          .run();
+        // Extract CVSS metrics if available
+        const baseScore = vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || null;
+        const baseSeverity = vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity || null;
+        const vectorString = vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString || null;
+        // Extract CWE if available
+        const cwe = vuln.weaknesses?.[0]?.description?.[0]?.value || null;
+        // Extract reference URLs
+        const refUrls = JSON.stringify(vuln.references?.map(ref => ref.url) || []);
+
+        await stmt.bind(
+          vuln.cveId,
+          vuln.link,
+          vuln.description,
+          vuln.source,
+          vuln.published,
+          vuln.lastModified,
+          baseScore,
+          baseSeverity,
+          vectorString,
+          cwe,
+          refUrls,
+          vuln.fetched_at
+        ).run();
+
+        await sendToLogQueue(env, {
+          level: 'debug',
+          message: `Stored vulnerability: ${vuln.cveId}`,
+        });
       } catch (error) {
         await sendToLogQueue(env, {
           level: 'error',
-          message: `Error inserting vulnerability into D1: ${error.message}`,
-          data: vuln,
+          message: `Failed to store vulnerability: ${vuln.cveId}`,
+          error: error.message,
         });
       }
     }

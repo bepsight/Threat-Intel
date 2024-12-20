@@ -4,7 +4,7 @@ import { sendToLogQueue } from "../utils/log.js";
 export default {
   async fetch(request, env) {
     const startTime = Date.now();
-    
+
     console.log('[Worker] Request received:', request.url);
     await sendToLogQueue(env, {
       level: 'info',
@@ -199,23 +199,23 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities,fauna, env) {
       );
 
       console.log('[FaunaDB] Ensuring index exists');
-      await fauna.query(
-          fql`
-            if (!Exists(Index("vulnerabilities_by_cveId"))) {
-             CreateIndex({
-                 name: "vulnerabilities_by_cveId",
+        await fauna.query(
+            fql`
+              if (!Exists(Index("vulnerabilities_by_cveId"))) {
+                CreateIndex({
+                  name: "vulnerabilities_by_cveId",
                   source: Collection("Vulnerabilities"),
-                terms: [{ field: ["data", "cve_id"] }],
-                 unique: true,
-                values: [
-                 { field: ["data","id"] }
-                ]
-              })
-            } else {
-             "index_exists"
-             }
+                  terms: [{ field: ['ref'] }], // Index on ref
+                  unique: true,
+                  values: [
+                    { field: ["cve", "id"] },
+                  ]
+                })
+              } else {
+                "index_exists"
+              }
          `
-    );
+        );
       }
        catch (error) {
              console.error('[FaunaDB] Fatal error ensuring collection/index:', error);
@@ -232,7 +232,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities,fauna, env) {
 
       for (const vuln of vulnerabilities) {
           try {
-              const query_create = fql`Vulnerabilities.create({ data: ${vuln} })`;
+            const query_create = fql`Vulnerabilities.create({ data: ${vuln} })`;
             await fauna.query(query_create);
              successCount++;
              console.log(`[FaunaDB] Successfully stored: ${vuln.cve_id}`);

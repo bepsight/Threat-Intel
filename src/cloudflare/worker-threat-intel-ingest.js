@@ -49,7 +49,7 @@ async function fetchThreatIntelData(env, d1, type) {
 
     if (type === 'nvd') {
       url = 'https://services.nvd.nist.gov/rest/json/cves/2.0/';
-      lastFetchTime = await getLastFetchTime(d1, url, env);
+      lastFetchTime = await getLastFetchTime(d1, type, env);
 
       let hasMoreData = true;
       let startIndex = 0;
@@ -158,7 +158,7 @@ async function fetchThreatIntelData(env, d1, type) {
 
       // Update last fetch time in D1
       const fetchTime = new Date().toISOString();
-      await updateLastFetchTime(d1, url, fetchTime, env);
+      await updateLastFetchTime(d1, type, fetchTime, env);
 
       await sendToLogQueue(env, {
         level: 'info',
@@ -188,11 +188,11 @@ async function fetchThreatIntelData(env, d1, type) {
   }
 }
 
-async function getLastFetchTime(d1, url, env) {
+async function getLastFetchTime(d1, source, env) {
   try {
     const result = await d1.prepare(`
-      SELECT last_fetch_time FROM fetch_stats WHERE url = ?
-    `).bind(url).first();
+      SELECT last_fetch_time FROM fetch_stats WHERE source = ?
+    `).bind(source).first();
 
     if (result) {
       return result.last_fetch_time;
@@ -297,18 +297,18 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   }
 }
 
-async function updateLastFetchTime(d1, url, fetchTime, env) {
+async function updateLastFetchTime(d1, source, fetchTime, env) {
   try {
     await d1.prepare(`
-      INSERT INTO fetch_stats (url, last_fetch_time)
+      INSERT INTO fetch_stats (source, last_fetch_time)
       VALUES (?, ?)
-      ON CONFLICT(url) DO UPDATE SET
+      ON CONFLICT(source) DO UPDATE SET
         last_fetch_time = excluded.last_fetch_time
-    `).bind(url, fetchTime).run();
+    `).bind(source, fetchTime).run();
 
     await sendToLogQueue(env, {
       level: 'info',
-      message: `Updated last fetch time for ${url} to ${fetchTime}.`,
+      message: `Updated last fetch time for ${source} to ${fetchTime}.`,
     });
   } catch (error) {
     await sendToLogQueue(env, {

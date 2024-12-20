@@ -29,7 +29,7 @@ async function fetchNvdData(env, fauna) {
   let startIndex = 0;
 
   const now = new Date();
-  now.setDate(now.getDate() - 1);
+  now.setDate(now.getDate() - 5);
   const lastModStartDate = now.toISOString();
   const lastModEndDate = new Date().toISOString();
 

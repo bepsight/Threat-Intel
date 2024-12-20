@@ -375,31 +375,38 @@ async function storeInFaunaDB(data, fauna, env) {
     }
 }
 
-async function getLastFetchTime(d1, resourceUrl, env) {
+async function getLastFetchTime(d1, source, env) {
   try {
-    const { results } = await d1
-      .prepare("SELECT last_fetch_time FROM fetch_stats WHERE resource_url = ?")
-      .bind(resourceUrl)
-      .all();
-
-    if (results && results.length > 0 && results[0].last_fetch_time) {
-      await sendToLogQueue(env, {
-        level: 'info',
-        message: `Last fetch time found for resource: ${resourceUrl}. Time: ${results[0].last_fetch_time}.`,
-      });
-      return results[0].last_fetch_time;
-    }
-
+    // Log query attempt
     await sendToLogQueue(env, {
-      level: 'info',
-      message: `Last fetch time not found for resource: ${resourceUrl}. Returning null.`,
+      level: 'debug',
+      message: 'Fetching last fetch time',
+      data: { source }
     });
-    return null;
+
+    const result = await d1.prepare(`
+      SELECT last_fetch_time 
+      FROM fetch_stats 
+      WHERE source = ?
+    `).bind(source).first();
+
+    // Log query result
+    await sendToLogQueue(env, {
+      level: 'debug',
+      message: 'Last fetch time result',
+      data: { result }
+    });
+
+    return result?.last_fetch_time || null;
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error getting last fetch time from D1 for resource: ${resourceUrl}. ${error.message}`,
-      stack: error.stack,
+      message: 'Error fetching last fetch time',
+      data: {
+        error: error.message,
+        source,
+        stack: error.stack
+      }
     });
     throw error;
   }

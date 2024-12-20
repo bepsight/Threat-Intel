@@ -192,8 +192,8 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     console.log('[FaunaDB] Ensuring collection exists');
     await fauna.query(
       fql`
-        if (!Exists(Collection("RawVulnerabilities"))) {
-          CreateCollection({ name: "RawVulnerabilities" })
+        if (!Exists(Collection("Vulnerabilities"))) {
+          CreateCollection({ name: "Vulnerabilities" })
         } else {
           "collection_exists"
         }

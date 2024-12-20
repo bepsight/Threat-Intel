@@ -70,14 +70,34 @@ async function fetchThreatIntelData(env, d1, type) {
         let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
         requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
 
-        response = await fetch(requestURL, {
-          headers: {
-            'Accept': 'application/json',
-            'apiKey': env.NVD_API_KEY,
-          },
-        });
+        try {
+          response = await fetch(requestURL, {
+            headers: {
+              'Accept': 'application/json',
+              'apiKey': env.NVD_API_KEY,
+            },
+          });
+        } catch (e) {
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: 'NVD API request failed',
+            data: { error: e.message, requestURL }
+          });
+          break; // or retry logic
+        }
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          await sendToLogQueue(env, {
+            level: 'error',
+            message: 'NVD API Error',
+            data: { status: response.status, body: errorBody }
+          });
+          break; // or retry logic
+        }
 
         responseText = await response.text();
+        const responseData = JSON.parse(responseText);
 
         // Log raw API response
         await sendToLogQueue(env, {
@@ -119,6 +139,12 @@ async function fetchThreatIntelData(env, d1, type) {
               });
 
               const processedItem = await processVulnerabilityItem(item);
+              if (!processedItem) continue; // Skip invalid
+
+              // Track the lastModified date for incremental fetch
+              if (processedItem.lastModified && (!lastModStartDate || processedItem.lastModified > lastModStartDate)) {
+                lastModStartDate = processedItem.lastModified;
+              }
 
               // Log processed item
               await sendToLogQueue(env, {
@@ -652,19 +678,28 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, env) {
 }
 
 async function processVulnerabilityItem(item) {
-  const cveData = item.cve; // Access the cve object from item
-  
+  if (!item?.cve?.id) {
+    await sendToLogQueue(env, {
+      level: 'warn',
+      message: 'Skipping invalid CVE entry',
+      data: { item }
+    });
+    return null;
+  }
+
+  const cveData = item.cve;
+  const firstMetric = cveData.metrics?.cvssMetricV31?.[0]?.cvssData || {};
   return {
     cveId: cveData.id,
     link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
     description: cveData.descriptions?.find(d => d.lang === 'en')?.value || '',
-    source: cveData.sourceIdentifier,
-    published: cveData.published,
-    lastModified: cveData.lastModified,
-    baseScore: cveData.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore,
-    baseSeverity: cveData.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity,
-    vectorString: cveData.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString,
-    cwe: cveData.weaknesses?.[0]?.description?.[0]?.value,
+    source: cveData.sourceIdentifier || 'NVD',
+    published: cveData.published || null,
+    lastModified: cveData.lastModified || null,
+    baseScore: firstMetric.baseScore || null,
+    baseSeverity: firstMetric.baseSeverity || null,
+    vectorString: firstMetric.vectorString || null,
+    cwe: cveData.weaknesses?.[0]?.description?.[0]?.value || null,
     refUrls: JSON.stringify(cveData.references?.map(ref => ref.url) || []),
     fetched_at: new Date().toISOString()
   };

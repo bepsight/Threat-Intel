@@ -108,31 +108,13 @@ async function fetchThreatIntelData(env, d1, type) {
                 data: item
               });
 
-              const processedItem = {
-                cveId: item.id || 'Unknown',
-                link: `https://nvd.nist.gov/vuln/detail/${item.id || 'Unknown'}`,
-                description: item.descriptions?.[0]?.value || '',
-                source: item.sourceIdentifier || 'NVD',
-                published: item.published || new Date().toISOString(),
-                lastModified: item.lastModified || new Date().toISOString(),
-                metrics: item.metrics || null,
-                weaknesses: item.weaknesses || null,
-                references: item.references || null,
-                fetched_at: new Date().toISOString()
-              };
-
-              // Log processed item
-              await sendToLogQueue(env, {
-                level: 'debug',
-                message: 'Processed Vulnerability',
-                data: processedItem
-              });
-
+              const processedItem = processVulnerabilityItem(item);
               processedData.push(processedItem);
             }
 
             // Store processed data
             await storeVulnerabilitiesInD1(d1, processedData, env);
+            await updateLastFetchTime(d1, type, new Date().toISOString(), env, processedData.length, true);
 
             // Update pagination
             startIndex += responseData.resultsPerPage;
@@ -297,25 +279,55 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   }
 }
 
-async function updateLastFetchTime(d1, source, fetchTime, env) {
+async function updateLastFetchTime(d1, source, fetchTime, env, itemCount = 0, success = true) {
   try {
     await d1.prepare(`
-      INSERT INTO fetch_stats (source, last_fetch_time)
-      VALUES (?, ?)
+      INSERT INTO fetch_stats (source, last_fetch_time, last_success_time, items_fetched)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(source) DO UPDATE SET
-        last_fetch_time = excluded.last_fetch_time
-    `).bind(source, fetchTime).run();
+        last_fetch_time = excluded.last_fetch_time,
+        last_success_time = CASE 
+          WHEN ? THEN excluded.last_fetch_time 
+          ELSE fetch_stats.last_success_time 
+        END,
+        items_fetched = items_fetched + ?
+    `).bind(
+      source, 
+      fetchTime, 
+      success ? fetchTime : null,
+      itemCount,
+      success ? 1 : 0,
+      itemCount
+    ).run();
 
     await sendToLogQueue(env, {
       level: 'info',
-      message: `Updated last fetch time for ${source} to ${fetchTime}.`,
+      message: `Updated fetch stats for ${source}: time=${fetchTime}, success=${success}, items=${itemCount}`,
     });
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error updating last fetch time: ${error.message}`,
+      message: `Error updating fetch stats: ${error.message}`,
       stack: error.stack,
     });
     throw error;
   }
+}
+
+async function processVulnerabilityItem(item) {
+  // From the logs we can see the correct data structure
+  const cveData = item.cve;
+  
+  return {
+    cveId: cveData.id,
+    link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
+    description: cveData.descriptions?.find(d => d.lang === 'en')?.value || '',
+    source: cveData.sourceIdentifier,
+    published: cveData.published,
+    lastModified: cveData.lastModified,
+    metrics: cveData.metrics,
+    weaknesses: cveData.weaknesses,
+    references: cveData.references,
+    fetched_at: new Date().toISOString()
+  };
 }

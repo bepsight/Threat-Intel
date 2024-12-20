@@ -197,7 +197,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Storing vulnerability: ${vuln.cve.id}`);
       await fauna.query(
         fql`
-          Create(Collection("Vulnerabilities"), {
+          Collection.byName("Vulnerabilities").create({
             data: ${vuln}
           })
         `

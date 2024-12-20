@@ -168,78 +168,77 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
   });
 
   try {
-    // Ensure collection exists
-    const createCollection = fql`
-      if (!Exists(Collection("Vulnerabilities"))) {
-        CreateCollection({ name: "Vulnerabilities" })
-      }
-    `;
-    await fauna.query(createCollection);
+    // First create collection if it doesn't exist
+    console.log('[FaunaDB] Ensuring collection exists');
+    await fauna.query(
+      fql`If(!Exists(Collection("Vulnerabilities")),
+        CreateCollection({ name: "Vulnerabilities" }))`
+    );
 
-    // Create index if needed
-    const createIndex = fql`
-      if (!Exists(Index("vulnerabilities_by_id"))) {
-        CreateIndex({
-          name: "vulnerabilities_by_id",
-          source: Collection("Vulnerabilities"),
-          terms: [{ field: ["data", "raw", "cve", "id"] }],
-          unique: true
-        })
-      }
-    `;
-    await fauna.query(createIndex);
+    let successCount = 0;
+    let errorCount = 0;
 
     for (const vuln of vulnerabilities) {
       try {
         console.log(`[FaunaDB] Processing CVE: ${vuln.cve.id}`);
-        const doc = { raw: vuln };
         
-        const query = fql`
-          Let existing = Vulnerabilities.firstWhere(.data.raw.cve.id == ${vuln.cve.id})
-          if (!existing) {
-            Vulnerabilities.create({
-              data: {
-                raw: ${vuln},
-                created_at: Now(),
-                updated_at: Now()
+        // Simplified query structure
+        const result = await fauna.query(
+          fql`
+            Create(
+              Collection("Vulnerabilities"),
+              {
+                data: {
+                  cveId: ${vuln.cve.id},
+                  sourceData: ${vuln},
+                  createdAt: Now(),
+                  updatedAt: Now()
+                }
               }
-            })
-          } else {
-            Vulnerabilities.byId(existing._id).update({
-              data: {
-                raw: ${vuln},
-                updated_at: Now()
-              }
-            })
-          }
-        `;
+            )
+          `
+        );
 
-        const result = await fauna.query(query);
-        console.log(`[FaunaDB] Successfully processed: ${vuln.cve.id}`);
+        successCount++;
+        console.log(`[FaunaDB] Successfully stored: ${vuln.cve.id}`);
         await sendToLogQueue(env, {
           level: 'info',
-          message: 'FaunaDB operation successful',
-          data: { cveId: vuln.cve.id, operation: result ? 'update' : 'create' }
+          message: 'FaunaDB store success',
+          data: { cveId: vuln.cve.id }
         });
       } catch (error) {
-        console.error(`[FaunaDB] Error processing ${vuln.cve.id}:`, error);
+        errorCount++;
+        console.error(`[FaunaDB] Error storing ${vuln.cve.id}:`, error);
         await sendToLogQueue(env, {
           level: 'error',
-          message: 'FaunaDB operation failed',
-          data: { 
+          message: 'FaunaDB store error',
+          data: {
             cveId: vuln.cve.id,
             error: error.message,
+            validationErrors: error.errors,
             stack: error.stack
           }
         });
       }
     }
+
+    console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: 'FaunaDB batch complete',
+      data: { successCount, errorCount }
+    });
+
   } catch (error) {
     console.error('[FaunaDB] Fatal error:', error);
     await sendToLogQueue(env, {
       level: 'error',
       message: 'Fatal FaunaDB error',
-      data: { error: error.message, stack: error.stack }
+      data: {
+        error: error.message,
+        validationErrors: error.errors,
+        stack: error.stack
+      }
     });
     throw error;
   }

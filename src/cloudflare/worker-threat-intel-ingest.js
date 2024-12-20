@@ -51,8 +51,19 @@ async function fetchThreatIntelData(env, d1, type) {
       url = 'https://services.nvd.nist.gov/rest/json/cves/2.0/';
       lastFetchTime = await getLastFetchTime(d1, type, env);
 
+      // Log fetch initiation
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: 'Starting NVD fetch',
+        data: {
+          lastFetchTime,
+          retention_days: data_retention_days
+        }
+      });
+
       let hasMoreData = true;
       let startIndex = 0;
+      let totalItems = 0;
       let lastModStartDate = null;
       let lastModEndDate = null;
 
@@ -66,6 +77,35 @@ async function fetchThreatIntelData(env, d1, type) {
         lastModEndDate = new Date().toISOString();
       }
 
+      // First request to get total count
+      let requestURL = `${url}?resultsPerPage=2000&startIndex=0`;
+      requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
+
+      response = await fetch(requestURL, {
+        headers: {
+          'Accept': 'application/json',
+          'apiKey': env.NVD_API_KEY,
+        },
+      });
+
+      if (response.ok) {
+        const initialData = await response.json();
+        totalItems = initialData.totalResults;
+
+        // Log total items to be fetched
+        await sendToLogQueue(env, {
+          level: 'info',
+          message: 'NVD fetch statistics',
+          data: {
+            total_items: totalItems,
+            start_date: lastModStartDate,
+            end_date: lastModEndDate,
+            pages: Math.ceil(totalItems / 2000)
+          }
+        });
+      }
+
+      // Continue with existing pagination logic...
       while (hasMoreData) {
         let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
         requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
@@ -102,11 +142,11 @@ async function fetchThreatIntelData(env, d1, type) {
             
             for (const item of responseData.vulnerabilities) {
               // Log raw item
-              await sendToLogQueue(env, {
-                level: 'debug',
-                message: 'Processing Vulnerability',
-                data: item
-              });
+              //await sendToLogQueue(env, {
+              //  level: 'debug',
+              //  message: 'Processing Vulnerability',
+              //  data: item
+              //});
 
               const processedItem = processVulnerabilityItem(item);
               processedData.push(processedItem);
@@ -128,6 +168,18 @@ async function fetchThreatIntelData(env, d1, type) {
                 processed: processedData.length,
                 total: responseData.totalResults,
                 remaining: responseData.totalResults - startIndex
+              }
+            });
+
+            // Add progress logging
+            await sendToLogQueue(env, {
+              level: 'info',
+              message: 'NVD fetch progress',
+              data: {
+                processed: startIndex,
+                total: totalItems,
+                remaining: totalItems - startIndex,
+                progress_percentage: ((startIndex / totalItems) * 100).toFixed(2)
               }
             });
           } else {

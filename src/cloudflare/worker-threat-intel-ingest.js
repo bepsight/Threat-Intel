@@ -49,7 +49,7 @@ async function fetchThreatIntelData(env, d1, type) {
 
     if (type === 'nvd') {
       url = 'https://services.nvd.nist.gov/rest/json/cves/2.0/';
-      lastFetchTime = await getLastFetchTime(d1, url, env);
+      lastFetchTime = await getLastFetchTime(d1, type, env);
 
       let hasMoreData = true;
       let startIndex = 0;
@@ -70,13 +70,6 @@ async function fetchThreatIntelData(env, d1, type) {
         let requestURL = `${url}?resultsPerPage=2000&startIndex=${startIndex}`;
         requestURL += `&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
 
-        // Log request
-        await sendToLogQueue(env, {
-          level: 'info',
-          message: 'NVD API Request',
-          data: { url: requestURL }
-        });
-
         response = await fetch(requestURL, {
           headers: {
             'Accept': 'application/json',
@@ -86,14 +79,31 @@ async function fetchThreatIntelData(env, d1, type) {
 
         responseText = await response.text();
 
+        // Log raw API response
+        await sendToLogQueue(env, {
+          level: 'debug',
+          message: 'NVD API Raw Response',
+          data: {
+            url: requestURL,
+            response: JSON.parse(responseText),
+            startIndex,
+            timestamp: new Date().toISOString()
+          }
+        });
+
         if (response.ok) {
           const responseData = JSON.parse(responseText);
 
-          // Log raw response
+          // Log pagination details
           await sendToLogQueue(env, {
-            level: 'debug',
-            message: 'NVD Raw Response',
-            data: responseData
+            level: 'info',
+            message: 'NVD API Pagination Info',
+            data: {
+              totalResults: responseData.totalResults,
+              resultsPerPage: responseData.resultsPerPage,
+              startIndex,
+              remainingItems: responseData.totalResults - startIndex
+            }
           });
 
           if (responseData?.vulnerabilities?.length > 0) {

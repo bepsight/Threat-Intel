@@ -631,52 +631,78 @@ async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
 
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
-    if (vulnerabilities.length === 0) {
-      await sendToLogQueue(env, {
-        level: 'info',
-        message: 'No vulnerabilities to store in D1.',
-      });
-      return;
-    }
-
     await sendToLogQueue(env, {
       level: 'info',
-      message: `Storing ${vulnerabilities.length} vulnerabilities in D1.`,
+      message: `Starting to store ${vulnerabilities.length} vulnerabilities in D1`
     });
+
+    const stmt = d1.prepare(`
+      INSERT INTO vulnerabilities (
+        cve_id, source_identifier, published, last_modified, 
+        description, base_score, base_severity, vector_string, 
+        cwe, ref_urls
+      ) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cve_id) DO UPDATE SET
+        last_modified = excluded.last_modified,
+        description = excluded.description,
+        base_score = excluded.base_score,
+        base_severity = excluded.base_severity,
+        vector_string = excluded.vector_string,
+        cwe = excluded.cwe,
+        ref_urls = excluded.ref_urls
+    `);
 
     for (const vuln of vulnerabilities) {
       try {
-        await d1
-          .prepare(
-            'INSERT OR IGNORE INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
-          )
-          .bind(
-            vuln.title,
-            vuln.link,
-            vuln.description,
-            vuln.source,
-            vuln.pub_date,
-            vuln.fetched_at
-          )
-          .run();
-      } catch (dbError) {
+        // Data validation
+        if (!vuln.id) {
+          throw new Error('Missing CVE ID');
+        }
+
+        await stmt.bind(
+          vuln.id,
+          vuln.sourceIdentifier || null,
+          vuln.published || null,
+          vuln.lastModified || null,
+          vuln.descriptions?.[0]?.value || null,
+          vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || null,
+          vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.baseSeverity || null,
+          vuln.metrics?.cvssMetricV31?.[0]?.cvssData?.vectorString || null,
+          vuln.weaknesses?.[0]?.description?.[0]?.value || null,
+          JSON.stringify(vuln.references?.map(ref => ref.url) || [])
+        ).run();
+
+        await sendToLogQueue(env, {
+          level: 'debug',
+          message: `Stored vulnerability ${vuln.id}`,
+          data: {
+            cve_id: vuln.id,
+            source: vuln.sourceIdentifier
+          }
+        });
+      } catch (error) {
         await sendToLogQueue(env, {
           level: 'error',
-          message: `Error inserting vulnerability into D1: ${dbError.message}`,
-          data: vuln,
+          message: `Failed to store vulnerability ${vuln.id}`,
+          error: error.message,
+          data: vuln
         });
       }
     }
 
     await sendToLogQueue(env, {
       level: 'info',
-      message: 'Vulnerabilities stored in D1 successfully.',
+      message: `Completed storing vulnerabilities in D1`,
+      data: {
+        total_processed: vulnerabilities.length
+      }
     });
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error in storeVulnerabilitiesInD1: ${error.message}`,
-      stack: error.stack,
+      message: 'Failed to prepare D1 statement',
+      error: error.message
     });
     throw error;
   }

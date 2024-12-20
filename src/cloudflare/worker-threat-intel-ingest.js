@@ -188,6 +188,27 @@ async function fetchThreatIntelData(env, d1, type) {
   }
 }
 
+async function getLastFetchTime(d1, url, env) {
+  try {
+    const result = await d1.prepare(`
+      SELECT last_fetch_time FROM fetch_times WHERE url = ?
+    `).bind(url).first();
+
+    if (result) {
+      return result.last_fetch_time;
+    } else {
+      return null;
+    }
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error getting last fetch time: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
+
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
     if (vulnerabilities.length === 0) {
@@ -270,6 +291,29 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
     await sendToLogQueue(env, {
       level: 'error',
       message: `Error storing vulnerabilities in D1: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
+
+async function updateLastFetchTime(d1, url, fetchTime, env) {
+  try {
+    await d1.prepare(`
+      INSERT INTO fetch_times (url, last_fetch_time)
+      VALUES (?, ?)
+      ON CONFLICT(url) DO UPDATE SET
+        last_fetch_time = excluded.last_fetch_time
+    `).bind(url, fetchTime).run();
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Updated last fetch time for ${url} to ${fetchTime}.`,
+    });
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error updating last fetch time: ${error.message}`,
       stack: error.stack,
     });
     throw error;

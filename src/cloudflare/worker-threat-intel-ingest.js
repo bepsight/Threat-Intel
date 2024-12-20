@@ -107,8 +107,18 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     try {
       // Wrap the entire item under a single field to avoid validation conflicts
       const doc = { raw: vuln };
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: 'Inserting vulnerability into FaunaDB',
+        data: doc,
+      });
       const query_create = fql`Vulnerabilities.create({ data: ${doc} })`;
-      await fauna.query(query_create);
+      const result = await fauna.query(query_create);
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: 'FaunaDB insertion result',
+        data: result,
+      });
     } catch (error) {
       await sendToLogQueue(env, {
         level: 'error',

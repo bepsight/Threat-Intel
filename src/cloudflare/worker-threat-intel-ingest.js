@@ -40,6 +40,7 @@ async function fetchThreatIntelData(env, d1, type) {
   let response;
   let responseText;
   let data = [];
+  let data_retention_days = 30;
 
   try {
     let url = '';
@@ -61,9 +62,9 @@ async function fetchThreatIntelData(env, d1, type) {
       if (lastFetchTime) {
         requestBody.from = new Date(lastFetchTime).toISOString();
       } else {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        requestBody.from = thirtyDaysAgo.toISOString();
+        const DaysAgo = new Date();
+        DaysAgo.setDate(DaysAgo.getDate() - data_retention_days);
+        requestBody.from = DaysAgo.toISOString();
       }
 
       let hasMoreData = true;
@@ -125,9 +126,9 @@ async function fetchThreatIntelData(env, d1, type) {
         lastModStartDate = new Date(lastFetchTime).toISOString();
         lastModEndDate = new Date().toISOString();
       } else {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        lastModStartDate = thirtyDaysAgo.toISOString();
+        const DaysAgo = new Date();
+        DaysAgo.setDate(DaysAgo.getDate() - data_retention_days);
+        lastModStartDate = DaysAgo.toISOString();
         lastModEndDate = new Date().toISOString();
       }
 
@@ -152,7 +153,43 @@ async function fetchThreatIntelData(env, d1, type) {
         if (response.ok) {
           const responseData = JSON.parse(responseText);
           if (responseData && responseData.vulnerabilities) {
-            allData.push(...responseData.vulnerabilities);
+            // Process and store this batch immediately
+            const processedData = responseData.vulnerabilities.map((item) => {
+              const cveItem = item.cve;
+              const title = cveItem.cveMetadata.cveId;
+              const link = `https://nvd.nist.gov/vuln/detail/${title}`;
+              const description =
+                cveItem.descriptions && cveItem.descriptions.length > 0
+                  ? cveItem.descriptions[0].value
+                  : '';
+              const source = 'NVD';
+              const pub_date = cveItem.published
+                ? cveItem.published
+                : new Date().toISOString();
+              const fetched_at = new Date().toISOString();
+
+              return {
+                title,
+                link,
+                description,
+                source,
+                pub_date,
+                fetched_at,
+              };
+            });
+
+            // Store processed data in D1
+            await storeVulnerabilitiesInD1(d1, processedData, env);
+
+            // Store in FaunaDB
+            await storeVulnerabilitiesInFaunaDB(processedData, env);
+
+            await sendToLogQueue(env, {
+              level: 'info',
+              message: `Processed and stored ${processedData.length} vulnerabilities from NVD feed.`,
+            });
+
+            // Update startIndex for next batch
             startIndex += responseData.resultsPerPage;
             if (startIndex >= responseData.totalResults) {
               hasMoreData = false;
@@ -163,14 +200,21 @@ async function fetchThreatIntelData(env, d1, type) {
         } else {
           await sendToLogQueue(env, {
             level: 'error',
-            message: `Failed to fetch nvd data: ${response.status} ${response.statusText}`,
+            message: `Failed to fetch NVD data: ${response.status} ${response.statusText}`,
             responseBody: responseText,
           });
-          throw new Error(`Failed to fetch nvd data: ${response.status} ${response.statusText}`);
+          throw new Error(`Failed to fetch NVD data: ${response.status} ${response.statusText}`);
         }
       }
-      data = allData;
 
+      // Update last fetch time in D1
+      const fetchTime = new Date().toISOString();
+      await updateLastFetchTime(d1, url, fetchTime, env);
+
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: `Successfully fetched NVD data from ${url}.`,
+      });
     } else if (type === 'rss') {
       url = 'https://your-rss-feed-url.com/rss';
       lastFetchTime = null;
@@ -510,31 +554,98 @@ async function processAndStoreData(env, d1, data, type, url, lastFetchTime) {
 
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
-    console.log('Storing vulnerabilities in D1');
-    for (const vuln of vulnerabilities) {
-      await d1
-        .prepare(
-          'INSERT INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
-        )
-        .bind(
-          vuln.title,
-          vuln.link,
-          vuln.description,
-          vuln.source,
-          vuln.pub_date,
-          vuln.fetched_at
-        )
-        .run();
+    if (vulnerabilities.length === 0) {
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: 'No vulnerabilities to store in D1.',
+      });
+      return;
     }
+
     await sendToLogQueue(env, {
       level: 'info',
-      message: 'Vulnerabilities data stored in D1 successfully.',
+      message: `Storing ${vulnerabilities.length} vulnerabilities in D1.`,
     });
-    console.log('Vulnerabilities stored in D1 successfully');
+
+    const insertStatement = d1.prepare(
+      'INSERT OR IGNORE INTO vulnerabilities (title, link, description, source, pub_date, fetched_at) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+
+    for (const vuln of vulnerabilities) {
+      try {
+        await insertStatement
+          .bind(
+            vuln.title,
+            vuln.link,
+            vuln.description,
+            vuln.source,
+            vuln.pub_date,
+            vuln.fetched_at
+          )
+          .run();
+      } catch (error) {
+        await sendToLogQueue(env, {
+          level: 'error',
+          message: `Error inserting vulnerability into D1: ${error.message}`,
+          data: vuln,
+        });
+      }
+    }
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: 'Vulnerabilities stored in D1 successfully.',
+    });
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
       message: `Error storing vulnerabilities in D1: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
+
+async function storeVulnerabilitiesInFaunaDB(vulnerabilities, env) {
+  const fauna = new Client({
+    secret: env.FAUNA_SECRET,
+  });
+
+  try {
+    if (vulnerabilities.length === 0) {
+      await sendToLogQueue(env, {
+        level: 'info',
+        message: 'No vulnerabilities to store in FaunaDB.',
+      });
+      return;
+    }
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: `Storing ${vulnerabilities.length} vulnerabilities in FaunaDB.`,
+    });
+
+    for (const vuln of vulnerabilities) {
+      try {
+        const query_create = fql`Vulnerabilities.create({ data: ${vuln} })`;
+        await fauna.query(query_create);
+      } catch (error) {
+        await sendToLogQueue(env, {
+          level: 'error',
+          message: `Error inserting vulnerability into FaunaDB: ${error.message}`,
+          data: vuln,
+        });
+      }
+    }
+
+    await sendToLogQueue(env, {
+      level: 'info',
+      message: 'Vulnerabilities stored in FaunaDB successfully.',
+    });
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: 'error',
+      message: `Error storing vulnerabilities in FaunaDB: ${error.message}`,
       stack: error.stack,
     });
     throw error;

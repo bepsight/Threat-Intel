@@ -40,7 +40,7 @@ async function fetchThreatIntelData(env, d1, type) {
   let response;
   let responseText;
   let data = [];
-  let data_retention_days = 30;
+  let data_retention_days = 5;
 
   try {
     let url = '';

@@ -178,7 +178,10 @@ function processVulnerabilityItem(item, env) {
 }
 
 async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
-  if (!vulnerabilities || !vulnerabilities.length) return;
+  if (!Array.isArray(vulnerabilities) || vulnerabilities.length === 0) {
+    console.log('[FaunaDB] No vulnerabilities to process.');
+    return;
+  }
 
   console.log(`[FaunaDB] Processing ${vulnerabilities.length} items`);
   await sendToLogQueue(env, {
@@ -186,8 +189,6 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     message: '[FaunaDB] Processing items',
     data: { count: vulnerabilities.length }
   });
-
-
 
   let successCount = 0;
   let errorCount = 0;
@@ -211,11 +212,12 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       });
     } catch (error) {
       errorCount++;
-      console.error('[FaunaDB] Store error:', error);
+      console.error(`[FaunaDB] Store error for ${vuln.cve.id}:`, error);
       await sendToLogQueue(env, {
         level: 'error',
         message: '[FaunaDB] Store error',
         data: {
+          cveId: vuln.cve.id,
           error: error.message,
           validationErrors: error.errors,
           stack: error.stack
@@ -227,7 +229,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
   console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);
   await sendToLogQueue(env, {
     level: 'info',
-    message: 'FaunaDB batch complete',
+    message: '[FaunaDB] Batch complete',
     data: { successCount, errorCount }
   });
 }

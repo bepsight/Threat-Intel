@@ -168,7 +168,7 @@ async function fetchThreatIntelData(env, d1, type) {
 
       // Update last fetch time in D1
       const fetchTime = new Date().toISOString();
-      await updateLastFetchTime(d1, url, fetchTime, env);
+      await updateLastFetchTime(d1, type, fetchTime, env);
 
       await sendToLogQueue(env, {
         level: 'info',
@@ -412,28 +412,48 @@ async function getLastFetchTime(d1, source, env) {
   }
 }
 
-async function updateLastFetchTime(d1, resourceUrl, fetchTime, env) {
+async function updateLastFetchTime(d1, source, fetchTime, env, itemCount = 0) {
   try {
-    await d1
-      .prepare(
-        `INSERT INTO fetch_stats (resource_url, last_fetch_time, fetch_count)
-         VALUES (?, ?, COALESCE((SELECT fetch_count FROM fetch_stats WHERE resource_url = ?) + 1, 1))
-         ON CONFLICT(resource_url) DO UPDATE SET
-           last_fetch_time = excluded.last_fetch_time,
-           fetch_count = fetch_stats.fetch_count + 1`
-      )
-      .bind(resourceUrl, fetchTime, resourceUrl)
-      .run();
+    await sendToLogQueue(env, {
+      level: 'debug',
+      message: 'Updating fetch stats',
+      data: { source, fetchTime, itemCount }
+    });
+
+    await d1.prepare(`
+      INSERT INTO fetch_stats (
+        source,
+        last_fetch_time,
+        last_success_time,
+        items_fetched
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(source) DO UPDATE SET
+        last_fetch_time = excluded.last_fetch_time,
+        last_success_time = excluded.last_success_time,
+        items_fetched = fetch_stats.items_fetched + excluded.items_fetched
+    `).bind(
+      source,
+      fetchTime,
+      fetchTime,
+      itemCount
+    ).run();
 
     await sendToLogQueue(env, {
       level: 'info',
-      message: `Last fetch time updated in D1 for resource: ${resourceUrl}. Time: ${fetchTime}.`,
+      message: 'Updated fetch stats successfully',
+      data: { source, fetchTime, itemCount }
     });
   } catch (error) {
     await sendToLogQueue(env, {
       level: 'error',
-      message: `Error updating last fetch time in D1 for resource: ${resourceUrl}. ${error.message}`,
-      stack: error.stack,
+      message: 'Failed to update fetch stats',
+      data: {
+        error: error.message,
+        source,
+        fetchTime,
+        itemCount,
+        stack: error.stack
+      }
     });
     throw error;
   }

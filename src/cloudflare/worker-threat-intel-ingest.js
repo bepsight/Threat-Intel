@@ -198,7 +198,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Storing vulnerability: ${vuln.cve.id}`);
       await fauna.query(
         fql`
-          Collection.byName("Vulnerabilities").create({
+          Vulnerabilities.create({
             data: ${vuln}
           })
         `
@@ -213,9 +213,6 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     } catch (error) {
       errorCount++;
       console.error(`[FaunaDB] Store error for ${vuln.cve.id}:`, error);
-      if (error.queryInfo && error.queryInfo.summary) {
-        console.error('[FaunaDB] Query validation summary:', error.queryInfo.summary);
-      }
       await sendToLogQueue(env, {
         level: 'error',
         message: '[FaunaDB] Store error',
@@ -236,3 +233,4 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     data: { successCount, errorCount }
   });
 }
+

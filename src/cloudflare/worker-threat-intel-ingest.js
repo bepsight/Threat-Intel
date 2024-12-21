@@ -167,19 +167,7 @@ function processVulnerabilityItem(item, env) {
   // Ensure consistent structure:
     const processedItem = {
       cve_id: item.cve.id,
-        sourceData: {
-           cve: {
-               id: item.cve.id,
-                sourceIdentifier: item.cve.sourceIdentifier,
-                published: item.cve.published,
-               lastModified: item.cve.lastModified
-            },
-            descriptions: item.cve.descriptions,
-            metrics: item.cve.metrics,
-           weaknesses:item.cve.weaknesses,
-            references: item.cve.references
-        },
-
+      sourceData: item,
   };
 
     return processedItem;

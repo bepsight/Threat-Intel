@@ -223,34 +223,37 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
 
     // Create or verify index without array indexing references (which can fail validation)
     console.log('[FaunaDB] Ensuring index exists');
-    const indexResult = await fauna.query(
-      fql`
-        if (!Index.byName("vulnerabilities_by_cveId").exists()) {
-          Index.create({
-            name: "vulnerabilities_by_cveId",
-            source: Collection("Vulnerabilities"),
-            terms: [{ field: "cve_id" }],
-            unique: true,
-            values: [
-              { field: "sourceData.cve.id" },
-              { field: "sourceData.metrics" },
-              { field: "sourceData.weaknesses" },
-              { field: "sourceData.published" },
-              { field: "sourceData.lastModified" },
-              { field: "sourceData.references" }
-            ]
-          })
-        } else {
-          "index_exists"
-        }
-      `
+    const fql = require('faunadb').query;
+    const { Exists, Index, CreateIndex, Collection } = fql;
+
+    const indexName = 'vulnerabilities_by_cveId';
+
+    const indexExists = await fauna.query(
+      Exists(Index(indexName))
     );
-    console.log('[FaunaDB] Index creation result:', indexResult);
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: '[FaunaDB] Index ensure result',
-      data: { indexResult }
-    });
+
+    if (!indexExists) {
+      await fauna.query(
+        CreateIndex({
+          name: indexName,
+          source: Collection('Vulnerabilities'),
+          terms: [{ field: ['data', 'cve_id'] }],
+          unique: true,
+          values: [
+            { field: ['data', 'sourceData', 'cve', 'id'] },
+            { field: ['data', 'sourceData', 'metrics', 'cvssMetricV31', 0, 'cvssData', 'baseScore'] },
+            { field: ['data', 'sourceData', 'metrics', 'cvssMetricV31', 0, 'cvssData', 'baseSeverity'] },
+            { field: ['data', 'sourceData', 'metrics', 'cvssMetricV31', 0, 'cvssData', 'vectorString'] },
+            { field: ['data', 'sourceData', 'weaknesses', 0, 'description', 0, 'value'] },
+            { field: ['data', 'sourceData', 'published'] },
+            { field: ['data', 'sourceData', 'lastModified'] },
+            { field: ['data', 'sourceData', 'references', '*', 'url'] }
+          ]
+        })
+      );
+    } else {
+      console.log('Index already exists.');
+    }
   } catch (error) {
     console.error('[FaunaDB] Fatal error ensuring collection/index:', error);
     await sendToLogQueue(env, {

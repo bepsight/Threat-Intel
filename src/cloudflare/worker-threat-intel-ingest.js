@@ -207,32 +207,34 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     console.log('[FaunaDB] Ensuring collection exists');
     await fauna.query(
       fql`
-        if (!Exists(Collection("Vulnerabilities"))) {
-          CreateCollection({ name: "Vulnerabilities" })
+        if (!Collection.byName("Vulnerabilities").exists()) {
+          Collection.create({ name: "Vulnerabilities" })
         } else {
           "collection_exists"
         }
       `
     );
+    
 
     console.log('[FaunaDB] Ensuring index exists');
+
     await fauna.query(
       fql`
-        if (!Exists(Index("vulnerabilities_by_cveId"))) {
-          CreateIndex({
+        if (!Index.byName("vulnerabilities_by_cveId").exists()) {
+          Index.create({
             name: "vulnerabilities_by_cveId",
             source: Collection("Vulnerabilities"),
-            terms: [{ field: ["data", "cve_id"] }],
+            terms: [{ field: "cve_id" }],
             unique: true,
             values: [
-              { field: ["data", "sourceData", "cve", "id"] },
-              { field: ["data", "sourceData", "metrics", "cvssMetricV31", 0, "cvssData", "baseScore"] },
-              { field: ["data", "sourceData", "metrics", "cvssMetricV31", 0, "cvssData", "baseSeverity"] },
-              { field: ["data", "sourceData", "metrics", "cvssMetricV31", 0, "cvssData", "vectorString"] },
-              { field: ["data", "sourceData", "weaknesses", 0, "description", 0, "value"] },
-              { field: ["data", "sourceData", "published"] },
-              { field: ["data", "sourceData", "lastModified"] },
-              { field: ["data", "sourceData", "references", "*", "url"] }
+              { field: "sourceData.cve.id" },
+              { field: "sourceData.metrics.cvssMetricV31[0].cvssData.baseScore" },
+              { field: "sourceData.metrics.cvssMetricV31[0].cvssData.baseSeverity" },
+              { field: "sourceData.metrics.cvssMetricV31[0].cvssData.vectorString" },
+              { field: "sourceData.weaknesses[0].description[0].value" },
+              { field: "sourceData.published" },
+              { field: "sourceData.lastModified" },
+              { field: "sourceData.references[*].url" }
             ]
           })
         } else {
@@ -240,6 +242,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
         }
       `
     );
+    
   } catch (error) {
     console.error('[FaunaDB] Fatal error ensuring collection/index:', error);
     await sendToLogQueue(env, {

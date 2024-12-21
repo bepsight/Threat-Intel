@@ -178,7 +178,7 @@ function processVulnerabilityItem(item, env) {
 }
 
 async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
-  if (!Array.isArray(vulnerabilities) || vulnerabilities.length === 0) {
+  if (!vulnerabilities?.length) {
     console.log('[FaunaDB] No vulnerabilities to process.');
     return;
   }
@@ -198,7 +198,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Storing vulnerability: ${vuln.cve.id}`);
       await fauna.query(
         fql`
-          Vulnerabilities.create({
+          Create(Collection("Vulnerabilities"), {
             data: ${vuln}
           })
         `
@@ -219,7 +219,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
         data: {
           cveId: vuln.cve.id,
           error: error.message,
-          validationErrors: error.errors,
+          validationErrors: error.errors || null,
           stack: error.stack
         }
       });

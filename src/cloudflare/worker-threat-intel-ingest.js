@@ -221,6 +221,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       data: { collectionResult }
     });
 
+    // Create or verify index without array indexing references (which can fail validation)
     console.log('[FaunaDB] Ensuring index exists');
     const indexResult = await fauna.query(
       fql`
@@ -232,13 +233,11 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
             unique: true,
             values: [
               { field: "sourceData.cve.id" },
-              { field: "sourceData.metrics.cvssMetricV31[0].cvssData.baseScore" },
-              { field: "sourceData.metrics.cvssMetricV31[0].cvssData.baseSeverity" },
-              { field: "sourceData.metrics.cvssMetricV31[0].cvssData.vectorString" },
-              { field: "sourceData.weaknesses[0].description[0].value" },
+              { field: "sourceData.metrics" },
+              { field: "sourceData.weaknesses" },
               { field: "sourceData.published" },
               { field: "sourceData.lastModified" },
-              { field: "sourceData.references[*].url" }
+              { field: "sourceData.references" }
             ]
           })
         } else {
@@ -252,7 +251,6 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       message: '[FaunaDB] Index ensure result',
       data: { indexResult }
     });
-
   } catch (error) {
     console.error('[FaunaDB] Fatal error ensuring collection/index:', error);
     await sendToLogQueue(env, {
@@ -263,6 +261,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     throw error;
   }
 
+  // Create each record
   for (const vuln of vulnerabilities) {
     try {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
@@ -276,7 +275,6 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
         message: '[FaunaDB] Store success',
         data: { cveId: vuln.cve_id, createResult }
       });
-
     } catch (error) {
       errorCount++;
       console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error);

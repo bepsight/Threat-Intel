@@ -187,7 +187,7 @@ function processVulnerabilityItem(item, env) {
 
 
 async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
-  if (!vulnerabilities?.length) {
+  if (!Array.isArray(vulnerabilities) || vulnerabilities.length === 0) {
     console.log('[FaunaDB] No vulnerabilities to process.');
     return;
   }
@@ -202,7 +202,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
   let successCount = 0;
   let errorCount = 0;
 
-  // Ensure the collection and index exist
+  // Just ensure the collection exists
   try {
     console.log('[FaunaDB] Ensuring collection exists');
     const collectionResult = await fauna.query(
@@ -214,61 +214,33 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
         }
       `
     );
-    console.log('[FaunaDB] Collection creation result:', collectionResult);
+    console.log('[FaunaDB] Collection ensure result:', collectionResult);
     await sendToLogQueue(env, {
       level: 'info',
       message: '[FaunaDB] Collection ensure result',
       data: { collectionResult }
     });
-
-    // Create or verify index without array indexing references (which can fail validation)
-    console.log('[FaunaDB] Ensuring index exists');
-    try {
-      const indexResult = await fauna.query(
-        fql`
-          If(
-            !Exists(Index("vulnerabilities_by_cveId")),
-            CreateIndex({
-              name: "vulnerabilities_by_cveId",
-              source: Collection("Vulnerabilities"),
-              terms: [{ field: ["data", "cve_id"] }],
-              unique: true,
-              values: [
-                { field: ["data", "sourceData", "cve", "id"] },
-                { field: ["data", "sourceData", "published"] },
-                { field: ["data", "sourceData", "lastModified"] },
-                { field: ["data", "sourceData", "metrics"] }
-              ]
-            }),
-            "index_exists"
-          )
-        `
-      );
-      console.log('[FaunaDB] Index operation result:', indexResult);
-    } catch (error) {
-      console.error('[FaunaDB] Index creation failed:', {
-        message: error.message,
-        errors: error.errors
-      });
-      throw error;
-    }
   } catch (error) {
-    console.error('[FaunaDB] Fatal error ensuring collection/index:', error);
+    console.error('[FaunaDB] Fatal error ensuring collection:', error);
     await sendToLogQueue(env, {
       level: 'error',
-      message: '[FaunaDB] Fatal error ensuring collection/index',
+      message: '[FaunaDB] Fatal error ensuring collection',
       data: { error: error.message, stack: error.stack }
     });
     throw error;
   }
 
-  // Create each record
+  // Store each record directly
   for (const vuln of vulnerabilities) {
     try {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
-      const queryCreate = fql`Vulnerabilities.create({ data: ${vuln} })`;
-      const createResult = await fauna.query(queryCreate);
-
+      const createResult = await fauna.query(
+        fql`
+          Create(Collection("Vulnerabilities"), {
+            data: ${vuln}
+          })
+        `
+      );
       successCount++;
       console.log(`[FaunaDB] Successfully stored: ${vuln.cve_id}`, createResult);
       await sendToLogQueue(env, {

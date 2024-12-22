@@ -224,7 +224,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
       const createResult = await fauna.query(
         fql`
-          let cveMatch = Vulnerabilities.byCveId(${vuln.cve_id}).first()
+          let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
           if (cveMatch != null) {
             cveMatch.update({ data: ${vuln} })
           } else {

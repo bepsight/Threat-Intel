@@ -225,7 +225,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       const createResult = await fauna.query(
         fql`
           Create(Collection("Vulnerabilities"), {
-            data: ${vuln}
+            data: ${vuln.sourceData }
           })
         `
       );

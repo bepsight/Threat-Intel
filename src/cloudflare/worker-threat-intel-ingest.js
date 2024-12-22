@@ -241,7 +241,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       });
     } catch (error) {
       errorCount++;
-      console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error.message);
+      console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error.queryInfo?.summary || error.message);
       await sendToLogQueue(env, {
         level: 'error',
         message: '[FaunaDB] Store error',

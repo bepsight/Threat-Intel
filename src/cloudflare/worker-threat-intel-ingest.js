@@ -153,24 +153,29 @@ async function fetchNvdData(env, fauna) {
   });
 }
 
-function processVulnerabilityItem(item, env) {
-  if (!item?.cve?.id) {
-    console.warn('[NVD] Invalid CVE entry:', item);
-    sendToLogQueue(env, {
-      level: 'warn',
-      message: '[NVD] Invalid CVE entry',
-      data: { item }
-    });
-    return null;
-  }
+function sanitizeNvdData(raw) {
+  // Recursively walk the object and replace `Boolean` with `false` or `true`,
+  // remove undefined, etc. (Or do whatever is appropriate for your data.)
+  // For brevity, this is just a conceptual example.
+  // Return only valid JSON data structures.
+  return JSON.parse(JSON.stringify(raw, (key, value) => {
+    if (value === Boolean) return false;  // or true, depending on the feed
+    if (typeof value === 'undefined') return null;
+    return value;
+  }));
+}
 
+
+function processVulnerabilityItem(item, env) {
+  if (!item?.cve?.id) return null;
+  
   // Ensure consistent structure:
-    const processedItem = {
-      cve_id: item.cve.id,
-      sourceData: item,
+  const processedItem = {
+    cve_id: item.cve.id,
+    sourceData: sanitizeNvdData(item), // Ensure data is Fauna-friendly
   };
 
-    return processedItem;
+  return processedItem;
 }
 
 
@@ -224,10 +229,8 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
       const createResult = await fauna.query(
         fql`
-          let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id})
-            .filter(doc => doc != null) // or doc => doc != null
-            .first()
-
+          let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
+      
           if (cveMatch == null) {
             Vulnerabilities.create({ data: ${vuln} })
           } else {

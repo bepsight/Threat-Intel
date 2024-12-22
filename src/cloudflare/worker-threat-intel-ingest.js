@@ -233,8 +233,10 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
             Var("exists"),
             Update(Select(["ref"], Get(Var("match"))), { data: $vuln }),
             Create(Collection("Vulnerabilities"), { data: $vuln })
+            )
           )
-        )
+        `,
+        { cve_id: vuln.cve_id, vuln }
         `
       );
       successCount++;

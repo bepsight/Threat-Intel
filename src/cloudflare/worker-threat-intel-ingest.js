@@ -224,9 +224,16 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
       const createResult = await fauna.query(
         fql`
-          Create(Collection("Vulnerabilities"), {
-            data: ${vuln.sourceData }
-          })
+          Let(
+                {
+                  doc: Get(Match(Index("vulnerabilities_by_cve_id"), "${vuln.cve_id}")),
+                },
+                If(
+                  IsDoc(Var("doc")),
+                  Update(Select("ref", Var("doc")), { data: ${vuln} }),
+                  Create(Collection("Vulnerabilities"), { data: ${vuln} })
+                )
+              )
         `
       );
       successCount++;

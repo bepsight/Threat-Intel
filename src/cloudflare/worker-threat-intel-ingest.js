@@ -231,9 +231,9 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
           let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
       
           if (cveMatch == null) {
-            // create
+            Vulnerabilities.create({ data: ${vuln} })
           } else {
-            cveMatch!.update(...)
+            cveMatch!.update({ data: ${vuln} })
           }
         `
       );

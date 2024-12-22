@@ -224,15 +224,14 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
       const createResult = await fauna.query(
         fql`
-          let cveMatch = Match(Index("vulnerabilities_by_cve_id"), ${vuln.cve_id})
-          if (cveMatch.exists()) {
+          let cveMatch = vulnerabilities_by_cve_id.byCveId(${vuln.cve_id})
+          if (cveMatch != null) {
             cveMatch.update({ data: ${vuln} })
           } else {
-            Collection.byName("Vulnerabilities").create({ data: ${vuln} })
+            Vulnerabilities.create({ data: ${vuln} })
           }
         `
       );
-      
       successCount++;
       console.log(`[FaunaDB] Successfully stored: ${vuln.cve_id}`, createResult);
       await sendToLogQueue(env, {
@@ -242,18 +241,18 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       });
     } catch (error) {
       errorCount++;
-      console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error.queryInfo?.summary || error.message);
+      console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error.message);
       await sendToLogQueue(env, {
         level: 'error',
         message: '[FaunaDB] Store error',
         data: {
           cveId: vuln.cve_id,
           error: error.message,
-          validationErrors: error.errors,
           stack: error.stack
         }
       });
     }
+    
   }
 
   console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);

@@ -224,14 +224,16 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
       const createResult = await fauna.query(
         fql`
-            let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
+          let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id})
+            .filter(doc => doc != null) // or doc => doc != null
+            .first()
 
-            if (cveMatch != null) {
-              cveMatch.update({ data: ${vuln} })
-            } else {
-              Vulnerabilities.create({ data: ${vuln} })
-            }
-          `
+          if (cveMatch == null) {
+            Vulnerabilities.create({ data: ${vuln} })
+          } else {
+            cveMatch.update({ data: ${vuln} })
+          }
+        `
       );
       successCount++;
       console.log(`[FaunaDB] Successfully stored: ${vuln.cve_id}`, createResult);

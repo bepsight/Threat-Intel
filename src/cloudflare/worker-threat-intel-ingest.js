@@ -153,14 +153,16 @@ async function fetchNvdData(env, fauna) {
   });
 }
 
-function sanitizeNvdData(raw) {
-  // Recursively walk the object and replace `Boolean` with `false` or `true`,
-  // remove undefined, etc. (Or do whatever is appropriate for your data.)
-  // For brevity, this is just a conceptual example.
-  // Return only valid JSON data structures.
-  return JSON.parse(JSON.stringify(raw, (key, value) => {
-    if (value === Boolean) return false;  // or true, depending on the feed
-    if (typeof value === 'undefined') return null;
+function sanitizeForFauna(obj) {
+  return JSON.parse(JSON.stringify(obj, (key, value) => {
+    if (value === Boolean) {
+      // Replace with either true or false
+      return false; 
+    }
+    if (typeof value === 'undefined') {
+      // Replace undefined with null
+      return null;
+    }
     return value;
   }));
 }
@@ -169,13 +171,10 @@ function sanitizeNvdData(raw) {
 function processVulnerabilityItem(item, env) {
   if (!item?.cve?.id) return null;
   
-  // Ensure consistent structure:
-  const processedItem = {
+  return {
     cve_id: item.cve.id,
-    sourceData: sanitizeNvdData(item), // Ensure data is Fauna-friendly
+    sourceData: sanitizeForFauna(item),  // ensure only valid JSON
   };
-
-  return processedItem;
 }
 
 
@@ -232,9 +231,9 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
           let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
       
           if (cveMatch == null) {
-            Vulnerabilities.create({ data: ${vuln} })
+            // create
           } else {
-            cveMatch.update({ data: ${vuln} })
+            cveMatch!.update(...)
           }
         `
       );

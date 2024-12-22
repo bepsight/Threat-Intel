@@ -1,6 +1,7 @@
 import { Client, fql } from "fauna";
 import { sendToLogQueue } from "../utils/log.js";
 
+// The main entry point for your worker:
 export default {
   async fetch(request, env) {
     const startTime = Date.now();
@@ -56,6 +57,11 @@ export default {
   },
 };
 
+/**
+ * 1) Fetches NVD data in pages.
+ * 2) Processes each item to ensure it’s valid JSON for Fauna.
+ * 3) Stores it in FaunaDB.
+ */
 async function fetchNvdData(env, fauna) {
   const startTime = Date.now();
   let response;
@@ -64,7 +70,7 @@ async function fetchNvdData(env, fauna) {
   let processedCount = 0;
   let errorCount = 0;
 
-  // Set date window
+  // Set date window (past 5 days)
   const now = new Date();
   now.setDate(now.getDate() - 5);
   const lastModStartDate = now.toISOString();
@@ -79,7 +85,8 @@ async function fetchNvdData(env, fauna) {
 
   while (hasMoreData) {
     const requestURL = `https://services.nvd.nist.gov/rest/json/cves/2.0/?resultsPerPage=2000` +
-                       `&startIndex=${startIndex}&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
+      `&startIndex=${startIndex}&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
+
     try {
       console.log('[NVD] Requesting:', requestURL);
       await sendToLogQueue(env, {
@@ -109,7 +116,7 @@ async function fetchNvdData(env, fauna) {
       const responseText = await response.text();
       const responseData = JSON.parse(responseText);
 
-      if (responseData?.vulnerabilities && responseData.vulnerabilities.length > 0) {
+      if (responseData?.vulnerabilities?.length > 0) {
         console.log(`[NVD] Processing ${responseData.vulnerabilities.length} vulnerabilities`);
         await sendToLogQueue(env, {
           level: 'info',
@@ -153,31 +160,52 @@ async function fetchNvdData(env, fauna) {
   });
 }
 
+/**
+ * Safely transform any invalid JSON data:
+ * - Replaces `Boolean` constructor with literal `false`
+ * - Replaces `undefined` with `null`
+ */
 function sanitizeForFauna(obj) {
   return JSON.parse(JSON.stringify(obj, (key, value) => {
+    // If the raw data literally had `Boolean`, replace it with `false`
     if (value === Boolean) {
-      // Replace with either true or false
-      return false; 
+      return false;
     }
+    // Convert undefined → null
     if (typeof value === 'undefined') {
-      // Replace undefined with null
       return null;
     }
-    return value;
+    return value; 
   }));
 }
 
-
+/**
+ * Extracts the minimal fields we need, then sanitizes the data.
+ */
 function processVulnerabilityItem(item, env) {
-  if (!item?.cve?.id) return null;
-  
+  // Must have an ID
+  if (!item?.cve?.id) {
+    console.warn('[NVD] Invalid CVE entry:', item);
+    sendToLogQueue(env, {
+      level: 'warn',
+      message: '[NVD] Invalid CVE entry',
+      data: { item }
+    });
+    return null;
+  }
+
+  // Return a clean object
   return {
     cve_id: item.cve.id,
-    sourceData: sanitizeForFauna(item),  // ensure only valid JSON
+    sourceData: sanitizeForFauna(item),
   };
 }
 
-
+/**
+ * Stores each vulnerability in FaunaDB:
+ * - Creates the collection if missing
+ * - Either creates a new doc or updates existing by cve_id
+ */
 async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
   if (!Array.isArray(vulnerabilities) || vulnerabilities.length === 0) {
     console.log('[FaunaDB] No vulnerabilities to process.');
@@ -194,7 +222,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
   let successCount = 0;
   let errorCount = 0;
 
-  // Just ensure the collection exists
+  // Ensure the collection exists
   try {
     console.log('[FaunaDB] Ensuring collection exists');
     const collectionResult = await fauna.query(
@@ -222,14 +250,14 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     throw error;
   }
 
-  // Store each record directly
+  // Create/update each vulnerability
   for (const vuln of vulnerabilities) {
     try {
       console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
       const createResult = await fauna.query(
         fql`
           let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
-      
+
           if (cveMatch == null) {
             Vulnerabilities.create({ data: ${vuln} })
           } else {
@@ -244,6 +272,7 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
         message: '[FaunaDB] Store success',
         data: { cveId: vuln.cve_id, createResult }
       });
+
     } catch (error) {
       errorCount++;
       console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error.queryInfo?.summary || error.message);
@@ -257,7 +286,6 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
         }
       });
     }
-    
   }
 
   console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);
@@ -267,4 +295,3 @@ async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
     data: { successCount, errorCount }
   });
 }
-

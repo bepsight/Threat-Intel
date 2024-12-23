@@ -1,56 +1,35 @@
 import { Client, fql } from "fauna";
 import { sendToLogQueue } from "../utils/log.js";
 
-// The main entry point for your worker:
+/**
+ * Main Worker entry point:
+ * - Exposes a single route `/fetchnvd`
+ * - Fetches data from NVD
+ * - Stores it in D1 (vulnerabilities table) and FaunaDB
+ */
 export default {
   async fetch(request, env) {
-    const startTime = Date.now();
-
-    console.log('[Worker] Request received:', request.url);
-    await sendToLogQueue(env, {
-      level: 'info',
-      message: '[Worker] Request received',
-      data: { url: request.url, timestamp: new Date().toISOString() }
-    });
-
-    const fauna = new Client({ secret: env.FAUNA_SECRET });
     const url = new URL(request.url);
 
     try {
-      if (url.pathname === '/fetchnvd') {
-        console.log('[Worker] Initiating NVD data fetch');
-        await sendToLogQueue(env, {
-          level: 'info',
-          message: '[Worker] Starting NVD data fetch',
-          data: { timestamp: new Date().toISOString() }
-        });
-
-        await fetchNvdData(env, fauna);
-
-        const duration = Date.now() - startTime;
-        console.log(`[Worker] Completed successfully in ${duration}ms`);
-        await sendToLogQueue(env, {
-          level: 'info',
-          message: '[Worker] Completed successfully',
-          data: { duration, timestamp: new Date().toISOString() }
-        });
-
-        return new Response('NVD data fetched successfully.', { status: 200 });
+      if (url.pathname === "/fetchnvd") {
+        // Fetch NVD data
+        await fetchNvdData(env);
+        return new Response("NVD data fetched successfully.", { status: 200 });
       } else {
-        console.log('[Worker] Not Found:', url.pathname);
+        // Not found
         await sendToLogQueue(env, {
-          level: 'warn',
-          message: '[Worker] Route not found',
-          data: { pathname: url.pathname }
+          level: "warn",
+          message: `[Worker] Route not found: ${url.pathname}`,
         });
-        return new Response('Not Found', { status: 404 });
+        return new Response("Not Found", { status: 404 });
       }
     } catch (error) {
-      console.error('[Worker] Error:', error);
+      // Log errors
       await sendToLogQueue(env, {
-        level: 'error',
-        message: '[Worker] Error',
-        data: { error: error.message, stack: error.stack }
+        level: "error",
+        message: `Error in fetch handler: ${error.message}`,
+        stack: error.stack,
       });
       return new Response(`Error: ${error.message}`, { status: 500 });
     }
@@ -58,240 +37,312 @@ export default {
 };
 
 /**
- * 1) Fetches NVD data in pages.
- * 2) Processes each item to ensure it’s valid JSON for Fauna.
- * 3) Stores it in FaunaDB.
+ * Fetch data from NVD in pages, store incrementally in D1 and FaunaDB.
  */
-async function fetchNvdData(env, fauna) {
-  const startTime = Date.now();
-  let response;
+async function fetchNvdData(env) {
+  const d1 = env.THREAT_INTEL_DB; // D1 binding
+  const fauna = new Client({ secret: env.FAUNA_SECRET }); // Fauna client
+
+  // We'll track incremental fetching via `fetch_stats` table in D1
+  const source = "nvd";
+
   let hasMoreData = true;
   let startIndex = 0;
-  let processedCount = 0;
-  let errorCount = 0;
+  const pageSize = 2000;
 
-  // Set date window (past 5 days)
-  const now = new Date();
-  now.setDate(now.getDate() - 5);
-  const lastModStartDate = now.toISOString();
-  const lastModEndDate = new Date().toISOString();
+  // Last fetch time from D1
+  const lastFetchTime = await getLastFetchTime(d1, source, env);
 
-  console.log('[NVD] Starting data fetch cycle');
-  await sendToLogQueue(env, {
-    level: 'info',
-    message: '[NVD] Starting data fetch cycle',
-    data: { lastModStartDate, lastModEndDate }
-  });
+  // Date range: either from last fetch time or X days ago
+  const dataRetentionDays = 1;
+  let lastModStartDate, lastModEndDate;
+  if (lastFetchTime) {
+    lastModStartDate = new Date(lastFetchTime).toISOString();
+    lastModEndDate = new Date().toISOString();
+  } else {
+    const daysAgo = new Date();
+    daysAgo.setDate(daysAgo.getDate() - dataRetentionDays);
+    lastModStartDate = daysAgo.toISOString();
+    lastModEndDate = new Date().toISOString();
+  }
 
+  // Keep fetching until no more data
   while (hasMoreData) {
-    const requestURL = `https://services.nvd.nist.gov/rest/json/cves/2.0/?resultsPerPage=2000` +
-      `&startIndex=${startIndex}&lastModStartDate=${lastModStartDate}&lastModEndDate=${lastModEndDate}`;
+    // Build NVD API URL
+    const requestURL = 
+      `https://services.nvd.nist.gov/rest/json/cves/2.0/?resultsPerPage=${pageSize}`
+      + `&startIndex=${startIndex}`
+      + `&lastModStartDate=${lastModStartDate}`
+      + `&lastModEndDate=${lastModEndDate}`;
 
+    // Fetch from NVD
+    let response;
     try {
-      console.log('[NVD] Requesting:', requestURL);
-      await sendToLogQueue(env, {
-        level: 'info',
-        message: '[NVD] Requesting data',
-        data: { requestURL, startIndex }
-      });
-
       response = await fetch(requestURL, {
         headers: {
-          'Accept': 'application/json',
-          'apiKey': env.NVD_API_KEY,
+          "Accept": "application/json",
+          "apiKey": env.NVD_API_KEY,
         },
       });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error('[NVD] API Error:', response.status, errorBody);
-        await sendToLogQueue(env, {
-          level: 'error',
-          message: '[NVD] API Error',
-          data: { status: response.status, body: errorBody }
-        });
-        break;
-      }
-
-      const responseText = await response.text();
-      const responseData = JSON.parse(responseText);
-
-      if (responseData?.vulnerabilities?.length > 0) {
-        console.log(`[NVD] Processing ${responseData.vulnerabilities.length} vulnerabilities`);
-        await sendToLogQueue(env, {
-          level: 'info',
-          message: '[NVD] Processing vulnerabilities',
-          data: { count: responseData.vulnerabilities.length, startIndex }
-        });
-
-        const validItems = [];
-        for (const item of responseData.vulnerabilities) {
-          const validated = processVulnerabilityItem(item, env);
-          if (validated) validItems.push(validated);
-        }
-
-        await storeVulnerabilitiesInFaunaDB(validItems, fauna, env);
-
-        processedCount += validItems.length;
-        startIndex += responseData.resultsPerPage;
-        hasMoreData = startIndex < responseData.totalResults;
-      } else {
-        hasMoreData = false;
-      }
-
-    } catch (err) {
-      errorCount++;
-      console.error('[NVD] Request failed:', err);
+    } catch (e) {
       await sendToLogQueue(env, {
-        level: 'error',
-        message: '[NVD] Request failed',
-        data: { error: err.message, stack: err.stack, startIndex }
+        level: "error",
+        message: "NVD API request failed",
+        data: { error: e.message, requestURL },
+      });
+      break; // stop or retry
+    }
+
+    // Check if response is OK
+    if (!response.ok) {
+      const errorBody = await response.text();
+      await sendToLogQueue(env, {
+        level: "error",
+        message: "NVD API Error",
+        data: { status: response.status, body: errorBody },
       });
       break;
     }
+
+    const responseText = await response.text();
+    const responseData = JSON.parse(responseText);
+
+    // Log pagination details
+    await sendToLogQueue(env, {
+      level: "info",
+      message: "NVD API Pagination Info",
+      data: {
+        totalResults: responseData.totalResults,
+        resultsPerPage: responseData.resultsPerPage,
+        startIndex,
+        remainingItems: responseData.totalResults - startIndex,
+      },
+    });
+
+    // If we have vulnerabilities, process them
+    if (responseData?.vulnerabilities?.length > 0) {
+      const processedData = [];
+
+      // Process each vulnerability
+      for (const item of responseData.vulnerabilities) {
+        // Convert NVD item to a simpler structure
+        const processedItem = processVulnerabilityItem(item);
+        if (processedItem) {
+          processedData.push(processedItem);
+        }
+      }
+
+      // Store in D1
+      await storeVulnerabilitiesInD1(d1, processedData, env);
+
+      // Store in FaunaDB
+      await storeVulnerabilitiesInFaunaDB(processedData, fauna, env);
+
+      // Update pagination
+      startIndex += responseData.resultsPerPage;
+      hasMoreData = startIndex < responseData.totalResults;
+    } else {
+      // No vulnerabilities => done
+      hasMoreData = false;
+    }
   }
 
-  const duration = Date.now() - startTime;
-  console.log(`[NVD] Completed fetch cycle. Processed: ${processedCount}, Errors: ${errorCount}, Duration: ${duration}ms`);
+  // Update the last fetch time
+  const fetchTime = new Date().toISOString();
+  await updateLastFetchTime(d1, source, fetchTime, env);
+
   await sendToLogQueue(env, {
-    level: 'info',
-    message: '[NVD] Completed fetch cycle',
-    data: { processedCount, errorCount, duration }
+    level: "info",
+    message: "Successfully fetched NVD data",
+    data: {
+      lastModStartDate,
+      lastModEndDate,
+      finalStartIndex: startIndex,
+    },
   });
 }
 
 /**
- * Safely transform any invalid JSON data:
- * - Replaces `Boolean` constructor with literal `false`
- * - Replaces `undefined` with `null`
+ * Convert raw NVD JSON into a simpler object structure
+ * suitable for D1 / FaunaDB.
  */
-function sanitizeForFauna(obj) {
-  return JSON.parse(JSON.stringify(obj, (key, value) => {
-    // If the raw data literally had `Boolean`, replace it with `false`
-    if (value === Boolean) {
-      return false;
-    }
-    // Convert undefined → null
-    if (typeof value === 'undefined') {
-      return null;
-    }
-    return value; 
-  }));
-}
-
-/**
- * Extracts the minimal fields we need, then sanitizes the data.
- */
-function processVulnerabilityItem(item, env) {
-  // Must have an ID
+function processVulnerabilityItem(item) {
   if (!item?.cve?.id) {
-    console.warn('[NVD] Invalid CVE entry:', item);
-    sendToLogQueue(env, {
-      level: 'warn',
-      message: '[NVD] Invalid CVE entry',
-      data: { item }
-    });
+    // Invalid item
     return null;
   }
 
-  // Return a clean object
+  const cveData = item.cve;
+  const firstMetric = cveData.metrics?.cvssMetricV31?.[0]?.cvssData || {};
+
   return {
-    cve_id: item.cve.id,
-    sourceData: sanitizeForFauna(item),
+    cveId: cveData.id,
+    link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
+    description:
+      cveData.descriptions?.find((d) => d.lang === "en")?.value || "",
+    source: cveData.sourceIdentifier || "NVD",
+    published: cveData.published || null,
+    lastModified: cveData.lastModified || null,
+    baseScore: firstMetric.baseScore || null,
+    baseSeverity: firstMetric.baseSeverity || null,
+    vectorString: firstMetric.vectorString || null,
+    cwe: cveData.weaknesses?.[0]?.description?.[0]?.value || null,
+    refUrls: JSON.stringify(cveData.references?.map((ref) => ref.url) || []),
+    fetched_at: new Date().toISOString(),
   };
 }
 
 /**
- * Stores each vulnerability in FaunaDB:
- * - Creates the collection if missing
- * - Either creates a new doc or updates existing by cve_id
+ * Store NVD vulnerabilities in Cloudflare D1 database
  */
-async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
-  if (!Array.isArray(vulnerabilities) || vulnerabilities.length === 0) {
-    console.log('[FaunaDB] No vulnerabilities to process.');
-    return;
-  }
-
-  console.log(`[FaunaDB] Processing ${vulnerabilities.length} items`);
-  await sendToLogQueue(env, {
-    level: 'info',
-    message: '[FaunaDB] Processing items',
-    data: { count: vulnerabilities.length }
-  });
-
-  let successCount = 0;
-  let errorCount = 0;
-
-  // Ensure the collection exists
+async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   try {
-    console.log('[FaunaDB] Ensuring collection exists');
-    const collectionResult = await fauna.query(
-      fql`
-        if (!Collection.byName("Vulnerabilities").exists()) {
-          Collection.create({ name: "Vulnerabilities" })
-        } else {
-          "collection_exists"
-        }
-      `
-    );
-    console.log('[FaunaDB] Collection ensure result:', collectionResult);
+    if (!vulnerabilities?.length) {
+      return;
+    }
+
+    const stmt = await d1.prepare(`
+      INSERT INTO vulnerabilities (
+        cve_id, description, source_identifier,
+        published, last_modified, base_score,
+        base_severity, vector_string, cwe,
+        ref_urls, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cve_id) DO UPDATE SET
+        description = excluded.description,
+        source_identifier = excluded.source_identifier,
+        published = excluded.published,
+        last_modified = excluded.last_modified,
+        base_score = excluded.base_score,
+        base_severity = excluded.base_severity,
+        vector_string = excluded.vector_string,
+        cwe = excluded.cwe,
+        ref_urls = excluded.ref_urls
+    `);
+
+    for (const vuln of vulnerabilities) {
+      if (!vuln.cveId) {
+        continue; // Skip invalid
+      }
+
+      await stmt
+        .bind(
+          vuln.cveId,
+          vuln.description,
+          vuln.source,
+          vuln.published,
+          vuln.lastModified,
+          vuln.baseScore,
+          vuln.baseSeverity,
+          vuln.vectorString,
+          vuln.cwe,
+          vuln.refUrls,
+          vuln.fetched_at
+        )
+        .run();
+    }
+
     await sendToLogQueue(env, {
-      level: 'info',
-      message: '[FaunaDB] Collection ensure result',
-      data: { collectionResult }
+      level: "info",
+      message: `Stored ${vulnerabilities.length} vulnerabilities in D1 successfully`,
     });
   } catch (error) {
-    console.error('[FaunaDB] Fatal error ensuring collection:', error);
     await sendToLogQueue(env, {
-      level: 'error',
-      message: '[FaunaDB] Fatal error ensuring collection',
-      data: { error: error.message, stack: error.stack }
+      level: "error",
+      message: `Error in storeVulnerabilitiesInD1: ${error.message}`,
+      stack: error.stack,
     });
     throw error;
   }
+}
 
-  // Create/update each vulnerability
-  for (const vuln of vulnerabilities) {
-    try {
-      console.log(`[FaunaDB] Attempting to store vulnerability: ${vuln.cve_id}`);
-      const createResult = await fauna.query(
-        fql`
-          let cveMatch = Vulnerabilities.vulnerabilities_by_cve_id(${vuln.cve_id}).first()
-
-          if (cveMatch == null) {
-            Vulnerabilities.create({ data: ${vuln} })
-          } else {
-            cveMatch!.update({ data: ${vuln} })
-          }
-        `
-      );
-      successCount++;
-      console.log(`[FaunaDB] Successfully stored: ${vuln.cve_id}`, createResult);
-      await sendToLogQueue(env, {
-        level: 'info',
-        message: '[FaunaDB] Store success',
-        data: { cveId: vuln.cve_id, createResult }
-      });
-
-    } catch (error) {
-      errorCount++;
-      console.error(`[FaunaDB] Store error for ${vuln.cve_id}:`, error.queryInfo?.summary || error.message);
-      await sendToLogQueue(env, {
-        level: 'error',
-        message: '[FaunaDB] Store error',
-        data: {
-          cveId: vuln.cve_id,
-          error: error.message,
-          stack: error.stack
-        }
-      });
+/**
+ * Store vulnerabilities in FaunaDB
+ */
+async function storeVulnerabilitiesInFaunaDB(vulnerabilities, fauna, env) {
+  try {
+    if (!vulnerabilities?.length) {
+      return;
     }
-  }
 
-  console.log(`[FaunaDB] Batch complete - Success: ${successCount}, Errors: ${errorCount}`);
-  await sendToLogQueue(env, {
-    level: 'info',
-    message: '[FaunaDB] Batch complete',
-    data: { successCount, errorCount }
-  });
+    for (const vuln of vulnerabilities) {
+      if (!vuln.cveId) continue; // skip invalid
+
+      const query = fql`
+        let collectionExists = Collection.byName("Vulnerabilities").exists()
+        if (!collectionExists) {
+          Collection.create({ name: "Vulnerabilities" })
+        }
+
+        Vulnerabilities.create({ data: ${vuln} })
+      `;
+      await fauna.query(query);
+    }
+
+    await sendToLogQueue(env, {
+      level: "info",
+      message: `Stored ${vulnerabilities.length} vulnerabilities in FaunaDB successfully`,
+    });
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: "error",
+      message: `Error storing vulnerabilities in FaunaDB: ${error.message}`,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Get last fetch time from D1
+ */
+async function getLastFetchTime(d1, source, env) {
+  try {
+    const result = await d1
+      .prepare(`SELECT last_fetch_time FROM fetch_stats WHERE source = ?`)
+      .bind(source)
+      .first();
+    return result?.last_fetch_time || null;
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: "error",
+      message: "Error fetching last fetch time",
+      data: { error: error.message, stack: error.stack },
+    });
+    throw error;
+  }
+}
+
+/**
+ * Update last fetch time in D1
+ */
+async function updateLastFetchTime(d1, source, fetchTime, env) {
+  try {
+    await d1
+      .prepare(
+        `
+        INSERT INTO fetch_stats (source, last_fetch_time, last_success_time, items_fetched)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(source) DO UPDATE SET
+          last_fetch_time = excluded.last_fetch_time,
+          last_success_time = excluded.last_success_time,
+          items_fetched = fetch_stats.items_fetched + excluded.items_fetched
+      `
+      )
+      .bind(source, fetchTime, fetchTime, 0)
+      .run();
+
+    await sendToLogQueue(env, {
+      level: "info",
+      message: "Updated fetch stats successfully",
+      data: { source, fetchTime },
+    });
+  } catch (error) {
+    await sendToLogQueue(env, {
+      level: "error",
+      message: "Failed to update fetch stats",
+      data: { error: error.message, stack: error.stack },
+    });
+    throw error;
+  }
 }

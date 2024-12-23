@@ -264,7 +264,7 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
 async function getLastFetchTime(d1, source, env) {
   try {
     const result = await d1
-      .prepare(`SELECT last_fetch_time FROM fetch_stats WHERE source = ?`)
+      .prepare(`SELECT last_fetch_time FROM fetch_metadata WHERE source = ?`)
       .bind(source)
       .first();
     return result?.last_fetch_time || null;

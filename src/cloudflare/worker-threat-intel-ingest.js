@@ -49,7 +49,7 @@ async function fetchNvdData(env) {
   const lastFetchTime = await getLastFetchTime(d1, source, env);
 
   // Date range logic
-  const dataRetentionDays = 1;
+  const dataRetentionDays = 30;
   let lastModStartDate, lastModEndDate;
   if (lastFetchTime) {
     lastModStartDate = new Date(lastFetchTime).toISOString();

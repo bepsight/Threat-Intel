@@ -61,12 +61,25 @@ async function fetchNvdData(env) {
     lastModEndDate = new Date().toISOString();
   }
 
+  await sendToLogQueue(env, {
+    level: "info",
+    message: "Starting NVD fetch process",
+    data: { lastFetchTime, lastModStartDate, lastModEndDate },
+  });
+
   while (hasMoreData) {
     const requestURL =
       `https://services.nvd.nist.gov/rest/json/cves/2.0/?resultsPerPage=${pageSize}` +
       `&startIndex=${startIndex}` +
       `&lastModStartDate=${lastModStartDate}` +
       `&lastModEndDate=${lastModEndDate}`;
+
+    // More detailed logging of requestURL
+    await sendToLogQueue(env, {
+      level: "debug",
+      message: "Fetching NVD data page",
+      data: { requestURL, startIndex, pageSize, hasMoreData },
+    });
 
     let response;
     try {
@@ -84,6 +97,13 @@ async function fetchNvdData(env) {
       });
       break;
     }
+
+    // Log raw status before checking response.ok
+    await sendToLogQueue(env, {
+      level: "debug",
+      message: "NVD API response",
+      data: { status: response.status, ok: response.ok },
+    });
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -121,6 +141,13 @@ async function fetchNvdData(env) {
       // Store in D1 only
       await storeVulnerabilitiesInD1(d1, processedData, env);
 
+      // Log the number of vulnerabilities processed in this batch
+      await sendToLogQueue(env, {
+        level: "debug",
+        message: "Vulnerabilities processed for this page",
+        data: { processedCount: processedData.length },
+      });
+
       startIndex += responseData.resultsPerPage;
       hasMoreData = startIndex < responseData.totalResults;
     } else {
@@ -133,12 +160,8 @@ async function fetchNvdData(env) {
 
   await sendToLogQueue(env, {
     level: "info",
-    message: "Successfully fetched NVD data",
-    data: {
-      lastModStartDate,
-      lastModEndDate,
-      finalStartIndex: startIndex,
-    },
+    message: "Finished fetching NVD data",
+    data: { finalStartIndex: startIndex, source },
   });
 }
 

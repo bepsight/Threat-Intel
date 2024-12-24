@@ -392,12 +392,12 @@ async function updateLastFetchTime(d1, source, fetchTime, env) {
     await d1
       .prepare(
         `
-        INSERT INTO fetch_stats (source, last_fetch_time, last_success_time, items_fetched)
+        INSERT INTO fetch_metadata (source, last_fetch_time, last_success_time, items_fetched)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(source) DO UPDATE SET
           last_fetch_time = excluded.last_fetch_time,
           last_success_time = excluded.last_success_time,
-          items_fetched = fetch_stats.items_fetched + excluded.items_fetched
+          items_fetched = fetch_metadata.items_fetched + excluded.items_fetched
       `
       )
       .bind(source, fetchTime, fetchTime, 0)

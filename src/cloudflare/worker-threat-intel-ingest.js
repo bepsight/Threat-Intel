@@ -136,7 +136,7 @@ async function fetchNvdData(env) {
     console.log(`[NVD] Total entries to process: ${totalEntries}`);
     await sendToLogQueue(env, {
       level: "info",
-      message: "Starting NVD data processing",
+      message: "[NVD] Starting NVD data processing ,[NVD] Total entries to process: ${totalEntries} ",
       data: {
         totalEntries,
         batchSize: pageSize,
@@ -251,7 +251,7 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   //console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
   await sendToLogQueue(env, {
     level: "info",
-    message: `Starting to store vulnerabilities in D1`,
+    message: `Starting to store  ${vulnerabilities.length} vulnerabilities in D1`,
     data: {
       count: vulnerabilities.length,
       timestamp: new Date().toISOString()
@@ -294,12 +294,12 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
         continue;
       }
 
-      console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
-      await sendToLogQueue(env, {
-        level: "debug",
-        message: `Processing vulnerability: ${vuln.cveId}`,
-        data: { cveId: vuln.cveId },
-      });
+      //console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
+      //await sendToLogQueue(env, {
+      //  level: "debug",
+      //  message: `Processing vulnerability: ${vuln.cveId}`,
+      //  data: { cveId: vuln.cveId },
+      //});
       
       try {
         await stmt
@@ -319,7 +319,7 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
           .run();
 
         successCount++;
-        console.log(`[D1] Successfully stored/updated: ${vuln.cveId}`);
+        //console.log(`[D1] Successfully stored/updated: ${vuln.cveId}`);
         
         await sendToLogQueue(env, {
           level: "debug",

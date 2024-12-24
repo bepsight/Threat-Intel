@@ -193,15 +193,18 @@ function processVulnerabilityItem(item) {
  * Store vulnerabilities in D1 in batches
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
-  console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
+  const startTime = Date.now();
+  console.log(`[D1] Starting batch insert of ${vulnerabilities.length} vulnerabilities`);
+  
+  let successCount = 0;
+  let errorCount = 0;
+  let errorDetails = [];
+
   const batchSize = 200; 
   if (!vulnerabilities?.length) {
     console.log('[D1] No vulnerabilities to store');
     return;
   }
-
-  let successCount = 0;
-  let errorCount = 0;
 
   const stmt = await d1.prepare(`
     INSERT INTO vulnerabilities (
@@ -223,12 +226,18 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   `);
 
   for (let i = 0; i < vulnerabilities.length; i += batchSize) {
+    const batchStartTime = Date.now();
     const batch = vulnerabilities.slice(i, i + batchSize);
+    
     console.log(`[D1] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(vulnerabilities.length/batchSize)}`);
+    
     for (const vuln of batch) {
       try {
-        if (!vuln.cveId) continue;
-        console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
+        if (!vuln.cveId) {
+          console.log('[D1] Skipping vulnerability with no CVE ID');
+          continue;
+        }
+
         await stmt
           .bind(
             vuln.cveId,
@@ -246,30 +255,76 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
           .run();
         successCount++;
       } catch (error) {
-        console.error(`[D1] Error processing ${vuln.cveId}:`, error);
         errorCount++;
+        errorDetails.push({
+          cveId: vuln.cveId,
+          error: error.message,
+          code: error.code
+        });
+        
+        console.error('[D1] Error inserting vulnerability:', {
+          cveId: vuln.cveId,
+          error: error.message,
+          code: error.code,
+          sql: stmt.toString(),
+          stack: error.stack
+        });
       }
     }
+    
+    console.log(`[D1] Batch complete:`, {
+      batchNumber: Math.floor(i/batchSize) + 1,
+      duration: `${Date.now() - batchStartTime}ms`,
+      success: successCount,
+      errors: errorCount
+    });
   }
 
-  console.log(`[D1] Storage complete - Success: ${successCount}, Errors: ${errorCount}`);
+  console.log('[D1] Storage operation complete:', {
+    totalDuration: `${Date.now() - startTime}ms`,
+    totalProcessed: vulnerabilities.length,
+    successful: successCount,
+    failed: errorCount,
+    errorDetails: errorDetails.length > 0 ? errorDetails : undefined
+  });
+
+  // Update fetch_metadata with results
+  await updateFetchMetadata(d1, 'nvd', new Date().toISOString(), successCount);
 }
 
 /**
  * Fetch existing metadata from D1
  */
 async function getFetchMetadata(d1, source) {
+  console.log('[D1] Fetching metadata for source:', source);
+  
   const sql = `
     SELECT
       last_fetch_time,
+      last_success_time,
       items_fetched,
       next_start_index
     FROM fetch_metadata
     WHERE source = ?
   `;
+
   try {
-    return await d1.prepare(sql).bind(source).first();
+    const startTime = Date.now();
+    const result = await d1.prepare(sql).bind(source).first();
+    
+    console.log('[D1] Successfully retrieved fetch metadata:', {
+      duration: `${Date.now() - startTime}ms`,
+      result
+    });
+    return result;
   } catch (error) {
+    console.error('[D1] Failed to get fetch metadata:', {
+      error: error.message,
+      sql: sql,
+      source: source,
+      code: error.code,
+      stack: error.stack
+    });
     return null;
   }
 }
@@ -278,17 +333,44 @@ async function getFetchMetadata(d1, source) {
  * Update metadata after fetching chunk
  */
 async function updateFetchMetadata(d1, source, fetchTime, nextStartIndex) {
+  console.log('[D1] Updating fetch metadata:', {
+    source,
+    fetchTime,
+    nextStartIndex
+  });
+
   const sql = `
     INSERT INTO fetch_metadata (
-      source, last_fetch_time, next_start_index
-    ) VALUES (?, ?, ?)
+      source, last_fetch_time, last_success_time, items_fetched, next_start_index
+    ) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(source) DO UPDATE SET
       last_fetch_time = excluded.last_fetch_time,
+      last_success_time = CASE 
+        WHEN excluded.items_fetched > 0 THEN excluded.last_fetch_time 
+        ELSE fetch_metadata.last_success_time 
+      END,
+      items_fetched = fetch_metadata.items_fetched + excluded.items_fetched,
       next_start_index = excluded.next_start_index
   `;
+
   try {
-    await d1.prepare(sql).bind(source, fetchTime, nextStartIndex).run();
+    const startTime = Date.now();
+    await d1.prepare(sql)
+      .bind(source, fetchTime, fetchTime, 0, nextStartIndex)
+      .run();
+    
+    console.log('[D1] Successfully updated fetch metadata:', {
+      duration: `${Date.now() - startTime}ms`,
+      newStartIndex: nextStartIndex
+    });
   } catch (error) {
-    // In production, handle or log errors
+    console.error('[D1] Failed to update fetch metadata:', {
+      error: error.message,
+      sql: sql,
+      params: {source, fetchTime, nextStartIndex},
+      code: error.code,
+      stack: error.stack
+    });
+    throw error; // Propagate error up
   }
 }

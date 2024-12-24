@@ -223,8 +223,16 @@ function processVulnerabilityItem(item) {
   // Use v3.1 if available, otherwise use v2
   const metrics = metricsV31 || metricsV2 || {};
   
-  console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
-
+  //console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
+  sendToLogQueue(env, {
+    level: "debug",
+    message: `[Process] Processing CVE ${cveData.id}`,
+    data: {
+      cveId: cveData.id,
+      hasCvssV31: !!metricsV31,
+      hasCvssV2: !!metricsV2
+    }
+  });
   return {
     cveId: cveData.id,
     link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,

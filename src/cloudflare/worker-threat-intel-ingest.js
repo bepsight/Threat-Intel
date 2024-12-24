@@ -33,7 +33,6 @@ export default {
  */
 async function fetchNvdDataChunk(env) {
   console.log('[NVD] Starting to fetch NVD data chunk');
-  const startTime = Date.now();
   const d1 = env.THREAT_INTEL_DB;
   const source = "nvd";
   const pageSize = 1000; // process 500 CVEs per invocation
@@ -135,13 +134,6 @@ async function fetchNvdDataChunk(env) {
     message: hasMore
       ? `Processed ${processedData.length} entries. Remaining to fetch: ${totalEntries - newStartIndex} (${((newStartIndex/totalEntries)*100).toFixed(2)}% complete)`
       : `All caught up with NVD data. Total entries in DB: ${existingCount?.count}`,
-    // Calculate and add total execution time
-    totalExecutionTime: (() => {
-      const totalMs = Date.now() - startTime;
-      const totalMinutes = Math.floor(totalMs / 60000);
-      const totalSeconds = Math.floor((totalMs % 60000) / 1000);
-      return `${totalMinutes}m ${totalSeconds}s`;
-    })()
   };
 
   console.log('[NVD] Progress Summary:', {
@@ -152,8 +144,6 @@ async function fetchNvdDataChunk(env) {
   });
 
   console.log('[NVD] Chunk processing complete:', result);
-  console.log(`[NVD] Total Execution Time: ${result.totalExecutionTime}`);
-
   return result;
 }
 

@@ -210,7 +210,7 @@ async function fetchNvdData(env) {
  * Convert raw NVD JSON into a simpler object structure
  * suitable for D1.
  */
-function processVulnerabilityItem(item) {
+function processVulnerabilityItem(item,env) {
   if (!item?.cve?.id) {
     return null;
   }

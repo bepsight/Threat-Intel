@@ -254,7 +254,7 @@ function processVulnerabilityItem(item) {
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   const startTime = Date.now();
-  const batchSize = 500; // Process logs in batches
+  const batchSize = 700; // Process logs in batches
   let successCount = 0;
   let updateCount = 0;
   let skipCount = 0;

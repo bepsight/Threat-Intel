@@ -248,8 +248,16 @@ function processVulnerabilityItem(item) {
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   const startTime = Date.now();
-  console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
-  
+  //console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
+  await sendToLogQueue(env, {
+    level: "info",
+    message: `Starting to store vulnerabilities in D1`,
+    data: {
+      count: vulnerabilities.length,
+      timestamp: new Date().toISOString()
+    }
+  });
+
   try {
     if (!vulnerabilities?.length) {
       console.log('[D1] No vulnerabilities to store');
@@ -287,6 +295,11 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
       }
 
       console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
+      await sendToLogQueue(env, {
+        level: "debug",
+        message: `Processing vulnerability: ${vuln.cveId}`,
+        data: { cveId: vuln.cveId },
+      });
       
       try {
         await stmt

@@ -196,18 +196,22 @@ function processVulnerabilityItem(item) {
  * Store vulnerabilities in D1 in batches
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
-  const startTime = Date.now();
   console.log(`[D1] Starting batch insert of ${vulnerabilities.length} vulnerabilities`);
-  
+
   let successCount = 0;
   let errorCount = 0;
   let errorDetails = [];
-
-  const batchSize = 200; 
+  const batchSize = 200;
   if (!vulnerabilities?.length) {
     console.log('[D1] No vulnerabilities to store');
     return;
   }
+
+  // Log insertion progress in multiples of 10%
+  let totalInserted = 0;
+  let nextLogPercent = 0; // Start from 0%
+  const totalVulns = vulnerabilities.length;
+  console.log(`[D1] Insert progress: 0% done`);
 
   const stmt = await d1.prepare(`
     INSERT INTO vulnerabilities (
@@ -229,11 +233,9 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   `);
 
   for (let i = 0; i < vulnerabilities.length; i += batchSize) {
-    const batchStartTime = Date.now();
     const batch = vulnerabilities.slice(i, i + batchSize);
-    
-    console.log(`[D1] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(vulnerabilities.length/batchSize)}`);
-    
+    console.log(`[D1] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(totalVulns/batchSize)}`);
+
     for (const vuln of batch) {
       try {
         if (!vuln.cveId) {
@@ -264,7 +266,6 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
           error: error.message,
           code: error.code
         });
-        
         console.error('[D1] Error inserting vulnerability:', {
           cveId: vuln.cveId,
           error: error.message,
@@ -273,19 +274,17 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
           stack: error.stack
         });
       }
-    }
-    
-    console.log(`[D1] Batch complete:`, {
-      batchNumber: Math.floor(i/batchSize) + 1,
-      duration: `${Date.now() - batchStartTime}ms`,
-      success: successCount,
-      errors: errorCount
-    });
-  }
 
+      totalInserted++;
+      const currentPercent = Math.floor((totalInserted / totalVulns) * 100);
+      if (currentPercent >= nextLogPercent && nextLogPercent <= 100) {
+        console.log(`[D1] Insert progress: ${currentPercent}% done`);
+        nextLogPercent += 10;
+      }
+    }
+  }
   console.log('[D1] Storage operation complete:', {
-    totalDuration: `${Date.now() - startTime}ms`,
-    totalProcessed: vulnerabilities.length,
+    totalProcessed: totalVulns,
     successful: successCount,
     failed: errorCount,
     errorDetails: errorDetails.length > 0 ? errorDetails : undefined

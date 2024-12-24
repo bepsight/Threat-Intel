@@ -77,11 +77,11 @@ async function fetchNvdData(env) {
       `&lastModEndDate=${lastModEndDate}`;
 
     // More detailed logging of requestURL
-    await sendToLogQueue(env, {
-      level: "debug",
-      message: "Fetching NVD data page",
-      data: { requestURL, startIndex, pageSize, hasMoreData },
-    });
+    //await sendToLogQueue(env, {
+    //  level: "debug",
+    //  message: "Fetching NVD data page",
+    //  data: { requestURL, startIndex, pageSize, hasMoreData },
+    //});
 
     let response;
     try {
@@ -101,11 +101,11 @@ async function fetchNvdData(env) {
     }
 
     // Log raw status before checking response.ok
-    await sendToLogQueue(env, {
-      level: "debug",
-      message: "NVD API response",
-      data: { status: response.status, ok: response.ok },
-    });
+    //await sendToLogQueue(env, {
+    //  level: "debug",
+    //  message: "NVD API response",
+    //  data: { status: response.status, ok: response.ok },
+    //});
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -301,11 +301,11 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
       }
 
       //console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
-      await sendToLogQueue(env, {
-        level: "debug",
-        message: `Processing vulnerability: ${vuln.cveId}`,
-        data: { cveId: vuln.cveId },
-      });
+      //await sendToLogQueue(env, {
+      //  level: "debug",
+      //  message: `Processing vulnerability: ${vuln.cveId}`,
+      //  data: { cveId: vuln.cveId },
+      //});
       
       try {
         await stmt

@@ -62,7 +62,7 @@ async function fetchNvdData(env) {
     lastModStartDate = daysAgo.toISOString();
     lastModEndDate = new Date().toISOString();
   }
-
+  console.log(`[NVD] Starting fetching data from ${lastModStartDate} to ${lastModEndDate}`);
   await sendToLogQueue(env, {
     level: "info",
     message: "Starting NVD fetch process",
@@ -254,21 +254,14 @@ function processVulnerabilityItem(item) {
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   const startTime = Date.now();
-  //console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
-  await sendToLogQueue(env, {
-    level: "info",
-    message: `Starting to store  ${vulnerabilities.length} vulnerabilities in D1`,
-    data: {
-      count: vulnerabilities.length,
-      timestamp: new Date().toISOString()
-    }
-  });
+  const batchSize = 100; // Process logs in batches
+  let successCount = 0;
+  let updateCount = 0;
+  let skipCount = 0;
+  let processingErrors = [];
 
   try {
-    if (!vulnerabilities?.length) {
-      console.log('[D1] No vulnerabilities to store');
-      return;
-    }
+    if (!vulnerabilities?.length) return;
 
     const stmt = await d1.prepare(`
       INSERT INTO vulnerabilities (
@@ -289,27 +282,19 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
         ref_urls = excluded.ref_urls
     `);
 
-    let successCount = 0;
-    let updateCount = 0;
-    let skipCount = 0;
+    // Process vulnerabilities in batches
+    for (let i = 0; i < vulnerabilities.length; i += batchSize) {
+      const batch = vulnerabilities.slice(i, i + batchSize);
+      const batchResults = [];
 
-    for (const vuln of vulnerabilities) {
-      if (!vuln.cveId) {
-        console.log(`[D1] Skipping invalid vulnerability: ${JSON.stringify(vuln)}`);
-        skipCount++;
-        continue;
-      }
+      for (const vuln of batch) {
+        if (!vuln.cveId) {
+          skipCount++;
+          continue;
+        }
 
-      //console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
-      //await sendToLogQueue(env, {
-      //  level: "debug",
-      //  message: `Processing vulnerability: ${vuln.cveId}`,
-      //  data: { cveId: vuln.cveId },
-      //});
-      
-      try {
-        await stmt
-          .bind(
+        try {
+          await stmt.bind(
             vuln.cveId,
             vuln.description,
             vuln.source,
@@ -321,64 +306,56 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
             vuln.cwe,
             vuln.refUrls,
             vuln.fetched_at
-          )
-          .run();
-
-        successCount++;
-        //console.log(`[D1] Successfully stored/updated: ${vuln.cveId}`);
-        
-        await sendToLogQueue(env, {
-          level: "debug",
-          message: `Processed vulnerability ${vuln.cveId}`,
-          data: {
+          ).run();
+          successCount++;
+          batchResults.push({
             cveId: vuln.cveId,
-            baseScore: vuln.baseScore,
-            baseSeverity: vuln.baseSeverity,
-            published: vuln.published,
-            lastModified: vuln.lastModified
-          }
-        });
-      } catch (error) {
-        console.error(`[D1] Error processing ${vuln.cveId}:`, error);
+            status: 'success'
+          });
+        } catch (error) {
+          processingErrors.push({
+            cveId: vuln.cveId,
+            error: error.message
+          });
+        }
+      }
+
+      // Log batch results instead of individual entries
+      if (batchResults.length > 0) {
         await sendToLogQueue(env, {
-          level: "error",
-          message: `Failed to process vulnerability ${vuln.cveId}`,
+          level: "info",
+          message: `Processed vulnerability batch ${Math.floor(i/batchSize) + 1}`,
           data: {
-            error: error.message,
-            stack: error.stack,
-            vulnerability: vuln
+            batchSize: batchResults.length,
+            successCount: batchResults.filter(r => r.status === 'success').length,
+            batchNumber: Math.floor(i/batchSize) + 1,
+            totalBatches: Math.ceil(vulnerabilities.length/batchSize)
           }
         });
       }
     }
 
-    const duration = Date.now() - startTime;
-    console.log(`[D1] Storage complete - Success: ${successCount}, Skipped: ${skipCount}, Duration: ${duration}ms`);
-
+    // Log final summary
     await sendToLogQueue(env, {
       level: "info",
-      message: `Stored vulnerabilities in D1 successfully`,
+      message: "Completed vulnerability processing",
       data: {
         total: vulnerabilities.length,
         success: successCount,
         skipped: skipCount,
-        duration,
-        timestamp: new Date().toISOString()
+        errors: processingErrors.length,
+        duration: Date.now() - startTime
       }
     });
+
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`[D1] Fatal error storing vulnerabilities:`, error);
-    
     await sendToLogQueue(env, {
-      level: "error",
-      message: `Error in storeVulnerabilitiesInD1`,
+      level: "error", 
+      message: "Fatal error in vulnerability processing",
       data: {
         error: error.message,
-        stack: error.stack,
-        duration,
-        timestamp: new Date().toISOString(),
-        vulnerabilitiesCount: vulnerabilities?.length
+        processed: successCount,
+        duration: Date.now() - startTime
       }
     });
     throw error;

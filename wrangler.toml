@@ -24,8 +24,8 @@ queue = "threat-intel-log-queue"
 binding = "MY_QUEUE"
 batch_size = 100 
 max_batch_size = 1000
-max_batch_timeout = 30
 max_retries = 5
+retry_delay = 1000
 
 
 [[d1_databases]]

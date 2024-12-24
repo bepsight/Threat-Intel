@@ -6,20 +6,23 @@ import { sendToLogQueue } from "../utils/log.js";
  */
 export default {
   async fetch(request, env) {
+    console.log('[Worker] Starting worker execution');
     const url = new URL(request.url);
 
     try {
       if (url.pathname === "/fetchnvd") {
-        // Only fetch a chunk of NVD data
+        console.log('[Worker] Handling /fetchnvd route');
         const result = await fetchNvdDataChunk(env);
         return new Response(JSON.stringify(result), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
       } else {
+        console.log(`[Worker] Route not found: ${url.pathname}`);
         return new Response("Not Found", { status: 404 });
       }
     } catch (error) {
+      console.error('[Worker] Error in fetch handler:', error);
       return new Response(`Error: ${error.message}`, { status: 500 });
     }
   },
@@ -29,12 +32,15 @@ export default {
  * Fetch only one chunk of NVD data in each invocation
  */
 async function fetchNvdDataChunk(env) {
+  console.log('[NVD] Starting to fetch NVD data chunk');
   const d1 = env.THREAT_INTEL_DB;
   const source = "nvd";
   const pageSize = 500; // process 500 CVEs per invocation
   
   // Retrieve last fetch metadata
+  console.log('[NVD] Retrieving fetch metadata');
   const metadata = await getFetchMetadata(d1, source);
+  console.log('[NVD] Current metadata:', metadata);
   const {
     last_fetch_time = null,
     next_start_index = 0,
@@ -53,15 +59,20 @@ async function fetchNvdDataChunk(env) {
     lastModEndDate = new Date().toISOString();
   }
 
+  console.log(`[NVD] Fetching data from ${lastModStartDate} to ${lastModEndDate}`);
+  console.log(`[NVD] Starting from index: ${next_start_index}`);
+
   // Construct request for a single chunk
   const requestURL =
     `https://services.nvd.nist.gov/rest/json/cves/2.0/?resultsPerPage=${pageSize}` +
     `&startIndex=${next_start_index}` +
     `&lastModStartDate=${lastModStartDate}` +
     `&lastModEndDate=${lastModEndDate}`;
+  console.log('[NVD] Request URL:', requestURL);
 
   let response;
   try {
+    console.log('[NVD] Sending request to NVD API');
     response = await fetch(requestURL, {
       headers: {
         Accept: "application/json",
@@ -69,35 +80,44 @@ async function fetchNvdDataChunk(env) {
       },
     });
   } catch (e) {
+    console.error('[NVD] API request failed:', e);
     return { error: `NVD API request failed: ${e.message}`, nextIndex: next_start_index };
   }
 
   if (!response.ok) {
     const errorBody = await response.text();
+    console.error('[NVD] API error response:', errorBody);
     return { error: `NVD API error: ${errorBody}`, nextIndex: next_start_index };
   }
 
   const responseData = await response.json();
   const totalEntries = responseData.totalResults || 0;
+  console.log(`[NVD] Total entries to process: ${totalEntries}`);
   const vulnerabilities = responseData.vulnerabilities || [];
+  console.log(`[NVD] Retrieved ${vulnerabilities.length} vulnerabilities in this chunk`);
 
   // Convert each raw NVD item to your format
   const processedData = vulnerabilities.map(processVulnerabilityItem).filter(Boolean);
+  console.log(`[NVD] Successfully processed ${processedData.length} vulnerabilities`);
 
   // Store this chunk
+  console.log('[NVD] Storing vulnerabilities in D1');
   await storeVulnerabilitiesInD1(d1, processedData, env);
   
   // Update metadata
   const newStartIndex = next_start_index + (responseData.resultsPerPage || 0);
   const hasMore = newStartIndex < totalEntries;
 
+  console.log(`[NVD] Progress: ${newStartIndex}/${totalEntries} (${((newStartIndex/totalEntries)*100).toFixed(2)}%)`);
+
   // If we still have data, store next_start_index in DB
   // Use the current run time as last fetch time
   const fetchTime = new Date().toISOString();
+  console.log('[NVD] Updating fetch metadata');
   await updateFetchMetadata(d1, source, fetchTime, newStartIndex);
 
   // Return info so logs or upstream triggers know whether to continue
-  return {
+  const result = {
     totalEntries,
     processedEntries: processedData.length,
     newStartIndex,
@@ -106,6 +126,9 @@ async function fetchNvdDataChunk(env) {
       ? `Processed a chunk (size ${processedData.length}). More data remains.`
       : "All caught up with NVD data.",
   };
+
+  console.log('[NVD] Chunk processing complete:', result);
+  return result;
 }
 
 /**
@@ -147,8 +170,15 @@ function processVulnerabilityItem(item) {
  * Store vulnerabilities in D1 in batches
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
+  console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
   const batchSize = 200; 
-  if (!vulnerabilities?.length) return;
+  if (!vulnerabilities?.length) {
+    console.log('[D1] No vulnerabilities to store');
+    return;
+  }
+
+  let successCount = 0;
+  let errorCount = 0;
 
   const stmt = await d1.prepare(`
     INSERT INTO vulnerabilities (
@@ -171,9 +201,11 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
 
   for (let i = 0; i < vulnerabilities.length; i += batchSize) {
     const batch = vulnerabilities.slice(i, i + batchSize);
+    console.log(`[D1] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(vulnerabilities.length/batchSize)}`);
     for (const vuln of batch) {
       try {
         if (!vuln.cveId) continue;
+        console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
         await stmt
           .bind(
             vuln.cveId,
@@ -189,11 +221,15 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
             vuln.fetched_at
           )
           .run();
+        successCount++;
       } catch (error) {
-        // In production, you might collect or log these errors.
+        console.error(`[D1] Error processing ${vuln.cveId}:`, error);
+        errorCount++;
       }
     }
   }
+
+  console.log(`[D1] Storage complete - Success: ${successCount}, Errors: ${errorCount}`);
 }
 
 /**

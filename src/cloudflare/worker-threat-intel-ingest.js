@@ -42,22 +42,15 @@ async function fetchNvdDataChunk(env) {
   const metadata = await getFetchMetadata(d1, source);
   console.log('[NVD] Current metadata:', metadata);
   const {
-    last_fetch_time = null,
     next_start_index = 0,
   } = metadata || {};
 
-  // Determine date range - 30 days if no last fetch time
+  // Always fetch the last 30 days, rather than using last_fetch_time.
   const dataRetentionDays = 30;
-  let lastModStartDate, lastModEndDate;
-  if (last_fetch_time) {
-    lastModStartDate = new Date(last_fetch_time).toISOString();
-    lastModEndDate = new Date().toISOString();
-  } else {
-    const daysAgo = new Date();
-    daysAgo.setDate(daysAgo.getDate() - dataRetentionDays);
-    lastModStartDate = daysAgo.toISOString();
-    lastModEndDate = new Date().toISOString();
-  }
+  const daysAgo = new Date();
+  daysAgo.setDate(daysAgo.getDate() - dataRetentionDays);
+  const lastModStartDate = daysAgo.toISOString();
+  const lastModEndDate = new Date().toISOString();
 
   console.log(`[NVD] Fetching data from ${lastModStartDate} to ${lastModEndDate}`);
   console.log(`[NVD] Starting from index: ${next_start_index}`);

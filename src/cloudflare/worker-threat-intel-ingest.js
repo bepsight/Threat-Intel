@@ -198,8 +198,12 @@ function processVulnerabilityItem(item) {
  * Store NVD vulnerabilities in Cloudflare D1 database
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
+  const startTime = Date.now();
+  console.log(`[D1] Starting to store ${vulnerabilities.length} vulnerabilities`);
+  
   try {
     if (!vulnerabilities?.length) {
+      console.log('[D1] No vulnerabilities to store');
       return;
     }
 
@@ -222,37 +226,92 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
         ref_urls = excluded.ref_urls
     `);
 
+    let successCount = 0;
+    let updateCount = 0;
+    let skipCount = 0;
+
     for (const vuln of vulnerabilities) {
       if (!vuln.cveId) {
-        continue; // Skip invalid
+        console.log(`[D1] Skipping invalid vulnerability: ${JSON.stringify(vuln)}`);
+        skipCount++;
+        continue;
       }
 
-      await stmt
-        .bind(
-          vuln.cveId,
-          vuln.description,
-          vuln.source,
-          vuln.published,
-          vuln.lastModified,
-          vuln.baseScore,
-          vuln.baseSeverity,
-          vuln.vectorString,
-          vuln.cwe,
-          vuln.refUrls,
-          vuln.fetched_at
-        )
-        .run();
+      console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
+      
+      try {
+        await stmt
+          .bind(
+            vuln.cveId,
+            vuln.description,
+            vuln.source,
+            vuln.published,
+            vuln.lastModified,
+            vuln.baseScore,
+            vuln.baseSeverity,
+            vuln.vectorString,
+            vuln.cwe,
+            vuln.refUrls,
+            vuln.fetched_at
+          )
+          .run();
+
+        successCount++;
+        console.log(`[D1] Successfully stored/updated: ${vuln.cveId}`);
+        
+        await sendToLogQueue(env, {
+          level: "debug",
+          message: `Processed vulnerability ${vuln.cveId}`,
+          data: {
+            cveId: vuln.cveId,
+            baseScore: vuln.baseScore,
+            baseSeverity: vuln.baseSeverity,
+            published: vuln.published,
+            lastModified: vuln.lastModified
+          }
+        });
+      } catch (error) {
+        console.error(`[D1] Error processing ${vuln.cveId}:`, error);
+        await sendToLogQueue(env, {
+          level: "error",
+          message: `Failed to process vulnerability ${vuln.cveId}`,
+          data: {
+            error: error.message,
+            stack: error.stack,
+            vulnerability: vuln
+          }
+        });
+      }
     }
+
+    const duration = Date.now() - startTime;
+    console.log(`[D1] Storage complete - Success: ${successCount}, Skipped: ${skipCount}, Duration: ${duration}ms`);
 
     await sendToLogQueue(env, {
       level: "info",
-      message: `Stored ${vulnerabilities.length} vulnerabilities in D1 successfully`,
+      message: `Stored vulnerabilities in D1 successfully`,
+      data: {
+        total: vulnerabilities.length,
+        success: successCount,
+        skipped: skipCount,
+        duration,
+        timestamp: new Date().toISOString()
+      }
     });
   } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error(`[D1] Fatal error storing vulnerabilities:`, error);
+    
     await sendToLogQueue(env, {
       level: "error",
-      message: `Error in storeVulnerabilitiesInD1: ${error.message}`,
-      stack: error.stack,
+      message: `Error in storeVulnerabilitiesInD1`,
+      data: {
+        error: error.message,
+        stack: error.stack,
+        duration,
+        timestamp: new Date().toISOString(),
+        vulnerabilitiesCount: vulnerabilities?.length
+      }
     });
     throw error;
   }

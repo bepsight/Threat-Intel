@@ -210,7 +210,7 @@ async function fetchNvdData(env) {
  * Convert raw NVD JSON into a simpler object structure
  * suitable for D1.
  */
-async function processVulnerabilityItem(item,env) {
+function processVulnerabilityItem(item,env) {
   if (!item?.cve?.id) {
     return null;
   }
@@ -224,15 +224,15 @@ async function processVulnerabilityItem(item,env) {
   const metrics = metricsV31 || metricsV2 || {};
   
   //console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
-  await sendToLogQueue(env, {
-    level: "debug",
-    message: `[Process] Processing CVE ${cveData.id}`,
-    data: {
-      cveId: cveData.id,
-      hasCvssV31: !!metricsV31,
-      hasCvssV2: !!metricsV2
-    }
-  });
+  //await sendToLogQueue(env, {
+  //  level: "debug",
+  //  message: `[Process] Processing CVE ${cveData.id}`,
+  //  data: {
+  //    cveId: cveData.id,
+  //    hasCvssV31: !!metricsV31,
+  //    hasCvssV2: !!metricsV2
+  //  }
+  //});
   return {
     cveId: cveData.id,
     link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,

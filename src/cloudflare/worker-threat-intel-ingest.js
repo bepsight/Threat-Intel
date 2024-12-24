@@ -35,7 +35,7 @@ async function fetchNvdDataChunk(env) {
   console.log('[NVD] Starting to fetch NVD data chunk');
   const d1 = env.THREAT_INTEL_DB;
   const source = "nvd";
-  const pageSize = 500; // process 500 CVEs per invocation
+  const pageSize = 1000; // process 500 CVEs per invocation
   
   // Retrieve last fetch metadata
   console.log('[NVD] Retrieving fetch metadata');

@@ -295,11 +295,11 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
       }
 
       //console.log(`[D1] Processing vulnerability: ${vuln.cveId}`);
-      //await sendToLogQueue(env, {
-      //  level: "debug",
-      //  message: `Processing vulnerability: ${vuln.cveId}`,
-      //  data: { cveId: vuln.cveId },
-      //});
+      await sendToLogQueue(env, {
+        level: "debug",
+        message: `Processing vulnerability: ${vuln.cveId}`,
+        data: { cveId: vuln.cveId },
+      });
       
       try {
         await stmt

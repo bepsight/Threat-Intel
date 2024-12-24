@@ -37,7 +37,7 @@ export async function sendToLogQueue(env, logEntry) {
 
   isSendingLogs = true;
   const MAX_SUBREQUESTS = 45; // Reserve some subrequests for other operations
-  const BATCH_SIZE = 50; // Adjust as needed
+  const BATCH_SIZE = 400; // Adjust as needed
   const MAX_RETRIES = 3;
   let subrequestsMade = 0;
 

@@ -227,6 +227,12 @@ function processVulnerabilityItem(item) {
   
   //console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
 
+  // Clean and format refUrls
+  const cleanedRefUrls = cveData.references
+    ?.map(ref => ref.url)
+    .filter(Boolean)
+    .join(',') || '';
+
   return {
     cveId: cveData.id,
     link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
@@ -238,7 +244,7 @@ function processVulnerabilityItem(item) {
     baseSeverity: metricsV31?.baseSeverity || cveData.metrics?.cvssMetricV2?.[0]?.baseSeverity || null,
     vectorString: metrics.vectorString || null,
     cwe: cveData.weaknesses?.[0]?.description?.[0]?.value || null,
-    refUrls: JSON.stringify(cveData.references?.map((ref) => ref.url) || []),
+    refUrls: cleanedRefUrls,
     fetched_at: new Date().toISOString(),
   };
 }

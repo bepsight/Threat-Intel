@@ -129,6 +129,20 @@ async function fetchNvdData(env) {
       },
     });
 
+    // Add total entries logging
+    const totalEntries = responseData.totalResults;
+    console.log(`[NVD] Total entries to process: ${totalEntries}`);
+    await sendToLogQueue(env, {
+      level: "info",
+      message: "Starting NVD data processing",
+      data: {
+        totalEntries,
+        batchSize: pageSize,
+        estimatedBatches: Math.ceil(totalEntries / pageSize),
+        startTime: new Date().toISOString()
+      }
+    });
+
     if (responseData?.vulnerabilities?.length > 0) {
       const processedData = [];
       for (const item of responseData.vulnerabilities) {
@@ -148,6 +162,21 @@ async function fetchNvdData(env) {
         data: { processedCount: processedData.length },
       });
 
+      // Add progress logging
+      const progress = ((startIndex / totalEntries) * 100).toFixed(2);
+      console.log(`[NVD] Processing batch ${Math.floor(startIndex/pageSize) + 1}/${Math.ceil(totalEntries/pageSize)} (${progress}%)`);
+      await sendToLogQueue(env, {
+        level: "debug",
+        message: "Processing NVD batch",
+        data: {
+          batchNumber: Math.floor(startIndex/pageSize) + 1,
+          totalBatches: Math.ceil(totalEntries/pageSize),
+          progress: `${progress}%`,
+          entriesProcessed: startIndex,
+          totalEntries
+        }
+      });
+
       startIndex += responseData.resultsPerPage;
       hasMoreData = startIndex < responseData.totalResults;
     } else {
@@ -163,6 +192,18 @@ async function fetchNvdData(env) {
     message: "Finished fetching NVD data",
     data: { finalStartIndex: startIndex, source },
   });
+
+  // Add final statistics
+  await sendToLogQueue(env, {
+    level: "info",
+    message: "Completed NVD data processing",
+    data: {
+      totalEntriesProcessed: startIndex,
+      totalAvailable: totalEntries,
+      completionTime: new Date().toISOString(),
+      processingDuration: `${((Date.now() - startTime)/1000).toFixed(2)}s`
+    }
+  });
 }
 
 /**
@@ -175,19 +216,25 @@ function processVulnerabilityItem(item) {
   }
 
   const cveData = item.cve;
-  const firstMetric = cveData.metrics?.cvssMetricV31?.[0]?.cvssData || {};
+  // Try CVSS v3.1 first, fall back to v2 if not available
+  const metricsV31 = cveData.metrics?.cvssMetricV31?.[0]?.cvssData;
+  const metricsV2 = cveData.metrics?.cvssMetricV2?.[0]?.cvssData;
+  
+  // Use v3.1 if available, otherwise use v2
+  const metrics = metricsV31 || metricsV2 || {};
+  
+  console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
 
   return {
     cveId: cveData.id,
     link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
-    description:
-      cveData.descriptions?.find((d) => d.lang === "en")?.value || "",
+    description: cveData.descriptions?.find((d) => d.lang === "en")?.value || "",
     source: cveData.sourceIdentifier || "NVD",
     published: cveData.published || null,
     lastModified: cveData.lastModified || null,
-    baseScore: firstMetric.baseScore || null,
-    baseSeverity: firstMetric.baseSeverity || null,
-    vectorString: firstMetric.vectorString || null,
+    baseScore: metrics.baseScore || null,
+    baseSeverity: metricsV31?.baseSeverity || cveData.metrics?.cvssMetricV2?.[0]?.baseSeverity || null,
+    vectorString: metrics.vectorString || null,
     cwe: cveData.weaknesses?.[0]?.description?.[0]?.value || null,
     refUrls: JSON.stringify(cveData.references?.map((ref) => ref.url) || []),
     fetched_at: new Date().toISOString(),

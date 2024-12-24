@@ -116,16 +116,39 @@ async function fetchNvdDataChunk(env) {
   console.log('[NVD] Updating fetch metadata');
   await updateFetchMetadata(d1, source, fetchTime, newStartIndex);
 
-  // Return info so logs or upstream triggers know whether to continue
+  // Add this before creating result object
+  const existingCount = await d1.prepare(`
+    SELECT COUNT(*) as count 
+    FROM vulnerabilities 
+    WHERE created_at >= ?
+  `).bind(lastModStartDate).first();
+
   const result = {
     totalEntries,
     processedEntries: processedData.length,
     newStartIndex,
     hasMore,
+    progress: {
+      existingInDb: existingCount?.count || 0,
+      remainingToFetch: totalEntries - newStartIndex,
+      percentComplete: ((existingCount?.count / totalEntries) * 100).toFixed(2),
+      dateRange: {
+        from: lastModStartDate,
+        to: lastModEndDate,
+        retentionDays: dataRetentionDays
+      }
+    },
     message: hasMore
-      ? `Processed a chunk (size ${processedData.length}). More data remains.`
-      : "All caught up with NVD data.",
+      ? `Processed ${processedData.length} entries. Remaining to fetch: ${totalEntries - newStartIndex} (${((newStartIndex/totalEntries)*100).toFixed(2)}% complete)`
+      : `All caught up with NVD data. Total entries in DB: ${existingCount?.count}`,
   };
+
+  console.log('[NVD] Progress Summary:', {
+    totalVulnerabilities: totalEntries,
+    existingInDb: existingCount?.count || 0,
+    remainingToFetch: totalEntries - newStartIndex,
+    percentComplete: ((existingCount?.count / totalEntries) * 100).toFixed(2) + '%'
+  });
 
   console.log('[NVD] Chunk processing complete:', result);
   return result;

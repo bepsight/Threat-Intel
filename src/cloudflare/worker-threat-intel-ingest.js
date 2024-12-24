@@ -39,7 +39,7 @@ export default {
  * Fetch data from NVD in pages, store incrementally in D1.
  */
 async function fetchNvdData(env) {
-  // We'll track incremental fetching via `fetch_metadata` table in D1
+  // We'll track incremental fetching via `fetch_stats` table in D1
   const d1 = env.THREAT_INTEL_DB; // D1 binding
   const source = "nvd";
   let hasMoreData = true;
@@ -210,7 +210,7 @@ async function fetchNvdData(env) {
  * Convert raw NVD JSON into a simpler object structure
  * suitable for D1.
  */
-function processVulnerabilityItem(item,env) {
+function processVulnerabilityItem(item) {
   if (!item?.cve?.id) {
     return null;
   }
@@ -223,16 +223,8 @@ function processVulnerabilityItem(item,env) {
   // Use v3.1 if available, otherwise use v2
   const metrics = metricsV31 || metricsV2 || {};
   
-  //console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
-  //await sendToLogQueue(env, {
-  //  level: "debug",
-  //  message: `[Process] Processing CVE ${cveData.id}`,
-  //  data: {
-  //    cveId: cveData.id,
-  //    hasCvssV31: !!metricsV31,
-  //    hasCvssV2: !!metricsV2
-  //  }
-  //});
+  console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
+
   return {
     cveId: cveData.id,
     link: `https://nvd.nist.gov/vuln/detail/${cveData.id}`,
@@ -400,12 +392,12 @@ async function updateLastFetchTime(d1, source, fetchTime, env) {
     await d1
       .prepare(
         `
-        INSERT INTO fetch_metadata (source, last_fetch_time, last_success_time, items_fetched)
+        INSERT INTO fetch_stats (source, last_fetch_time, last_success_time, items_fetched)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(source) DO UPDATE SET
           last_fetch_time = excluded.last_fetch_time,
           last_success_time = excluded.last_success_time,
-          items_fetched = fetch_metadata.items_fetched + excluded.items_fetched
+          items_fetched = fetch_stats.items_fetched + excluded.items_fetched
       `
       )
       .bind(source, fetchTime, fetchTime, 0)

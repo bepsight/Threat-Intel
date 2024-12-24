@@ -223,7 +223,7 @@ function processVulnerabilityItem(item) {
   // Use v3.1 if available, otherwise use v2
   const metrics = metricsV31 || metricsV2 || {};
   
-  console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
+  //console.log(`[Process] Processing CVE ${cveData.id} - CVSS v3.1: ${!!metricsV31}, CVSS v2: ${!!metricsV2}`);
 
   return {
     cveId: cveData.id,

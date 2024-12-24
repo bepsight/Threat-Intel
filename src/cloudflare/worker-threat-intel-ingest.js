@@ -33,10 +33,9 @@ export default {
  */
 async function fetchNvdDataChunk(env) {
   console.log('[NVD] Starting to fetch NVD data chunk');
-  const startTime = Date.now();
   const d1 = env.THREAT_INTEL_DB;
   const source = "nvd";
-  const pageSize = 1000; // process 500 CVEs per invocation
+  const pageSize = 700; // process 500 CVEs per invocation
   
   // Retrieve last fetch metadata
   console.log('[NVD] Retrieving fetch metadata');
@@ -135,13 +134,6 @@ async function fetchNvdDataChunk(env) {
     message: hasMore
       ? `Processed ${processedData.length} entries. Remaining to fetch: ${totalEntries - newStartIndex} (${((newStartIndex/totalEntries)*100).toFixed(2)}% complete)`
       : `All caught up with NVD data. Total entries in DB: ${existingCount?.count}`,
-    // Calculate and add total execution time
-    totalExecutionTime: (() => {
-      const totalMs = Date.now() - startTime;
-      const totalMinutes = Math.floor(totalMs / 60000);
-      const totalSeconds = Math.floor((totalMs % 60000) / 1000);
-      return `${totalMinutes}m ${totalSeconds}s`;
-    })()
   };
 
   console.log('[NVD] Progress Summary:', {
@@ -152,8 +144,6 @@ async function fetchNvdDataChunk(env) {
   });
 
   console.log('[NVD] Chunk processing complete:', result);
-  console.log(`[NVD] Total Execution Time: ${result.totalExecutionTime}`);
-
   return result;
 }
 
@@ -196,22 +186,18 @@ function processVulnerabilityItem(item) {
  * Store vulnerabilities in D1 in batches
  */
 async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
+  const startTime = Date.now();
   console.log(`[D1] Starting batch insert of ${vulnerabilities.length} vulnerabilities`);
-
+  
   let successCount = 0;
   let errorCount = 0;
   let errorDetails = [];
-  const batchSize = 200;
+
+  const batchSize = 200; 
   if (!vulnerabilities?.length) {
     console.log('[D1] No vulnerabilities to store');
     return;
   }
-
-  // Log insertion progress in multiples of 10%
-  let totalInserted = 0;
-  let nextLogPercent = 0; // Start from 0%
-  const totalVulns = vulnerabilities.length;
-  console.log(`[D1] Insert progress: 0% done`);
 
   const stmt = await d1.prepare(`
     INSERT INTO vulnerabilities (
@@ -233,9 +219,11 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
   `);
 
   for (let i = 0; i < vulnerabilities.length; i += batchSize) {
+    const batchStartTime = Date.now();
     const batch = vulnerabilities.slice(i, i + batchSize);
-    console.log(`[D1] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(totalVulns/batchSize)}`);
-
+    
+    console.log(`[D1] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(vulnerabilities.length/batchSize)}`);
+    
     for (const vuln of batch) {
       try {
         if (!vuln.cveId) {
@@ -266,6 +254,7 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
           error: error.message,
           code: error.code
         });
+        
         console.error('[D1] Error inserting vulnerability:', {
           cveId: vuln.cveId,
           error: error.message,
@@ -274,17 +263,19 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
           stack: error.stack
         });
       }
-
-      totalInserted++;
-      const currentPercent = Math.floor((totalInserted / totalVulns) * 100);
-      if (currentPercent >= nextLogPercent && nextLogPercent <= 100) {
-        console.log(`[D1] Insert progress: ${currentPercent}% done`);
-        nextLogPercent += 10;
-      }
     }
+    
+    console.log(`[D1] Batch complete:`, {
+      batchNumber: Math.floor(i/batchSize) + 1,
+      duration: `${Date.now() - batchStartTime}ms`,
+      success: successCount,
+      errors: errorCount
+    });
   }
+
   console.log('[D1] Storage operation complete:', {
-    totalProcessed: totalVulns,
+    totalDuration: `${Date.now() - startTime}ms`,
+    totalProcessed: vulnerabilities.length,
     successful: successCount,
     failed: errorCount,
     errorDetails: errorDetails.length > 0 ? errorDetails : undefined

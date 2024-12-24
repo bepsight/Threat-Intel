@@ -17,19 +17,19 @@ export default {
         return new Response("NVD data fetched successfully.", { status: 200 });
       } else {
         // Not found
-        await sendToLogQueue(env, {
-          level: "warn",
-          message: `[Worker] Route not found: ${url.pathname}`,
-        });
+        //await sendToLogQueue(env, {
+        //  level: "warn",
+        //  message: `[Worker] Route not found: ${url.pathname}`,
+        //});
         return new Response("Not Found", { status: 404 });
       }
     } catch (error) {
       // Log errors
-      await sendToLogQueue(env, {
-        level: "error",
-        message: `Error in fetch handler: ${error.message}`,
-        stack: error.stack,
-      });
+      // await sendToLogQueue(env, {
+      //   level: "error",
+      //   message: `Error in fetch handler: ${error.message}`,
+      //   stack: error.stack,
+      // });
       return new Response(`Error: ${error.message}`, { status: 500 });
     }
   },
@@ -63,11 +63,11 @@ async function fetchNvdData(env) {
     lastModEndDate = new Date().toISOString();
   }
   console.log(`[NVD] Starting fetching data from ${lastModStartDate} to ${lastModEndDate}`);
-  await sendToLogQueue(env, {
-    level: "info",
-    message: "Starting NVD fetch process",
-    data: { lastFetchTime, lastModStartDate, lastModEndDate },
-  });
+  //await sendToLogQueue(env, {
+  //  level: "info",
+  //  message: "Starting NVD fetch process",
+  //  data: { lastFetchTime, lastModStartDate, lastModEndDate },
+  //});
 
   while (hasMoreData) {
     const requestURL =
@@ -92,11 +92,11 @@ async function fetchNvdData(env) {
         },
       });
     } catch (e) {
-      await sendToLogQueue(env, {
-        level: "error",
-        message: "NVD API request failed",
-        data: { error: e.message, requestURL },
-      });
+      //await sendToLogQueue(env, {
+      //  level: "error",
+      //  message: "NVD API request failed",
+      //  data: { error: e.message, requestURL },
+      //});
       break;
     }
 
@@ -109,41 +109,41 @@ async function fetchNvdData(env) {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      await sendToLogQueue(env, {
-        level: "error",
-        message: "NVD API Error",
-        data: { status: response.status, body: errorBody },
-      });
+      //await sendToLogQueue(env, {
+      //  level: "error",
+      //  message: "NVD API Error",
+      //  data: { status: response.status, body: errorBody },
+      //});
       break;
     }
 
     const responseText = await response.text();
     const responseData = JSON.parse(responseText);
 
-    await sendToLogQueue(env, {
-      level: "info",
-      message: "NVD API Pagination Info",
-      data: {
-        totalResults: responseData.totalResults,
-        resultsPerPage: responseData.resultsPerPage,
-        startIndex,
-        remainingItems: responseData.totalResults - startIndex,
-      },
-    });
+    // await sendToLogQueue(env, {
+    //   level: "info",
+    //   message: "NVD API Pagination Info",
+    //   data: {
+    //     totalResults: responseData.totalResults,
+    //     resultsPerPage: responseData.resultsPerPage,
+    //     startIndex,
+    //     remainingItems: responseData.totalResults - startIndex,
+    //   },
+    // });
 
     // Add total entries logging
     const totalEntries = responseData.totalResults;
     console.log(`[NVD] Total entries to process: ${totalEntries}`);
-    await sendToLogQueue(env, {
-      level: "info",
-      message: "[NVD] Starting NVD data processing ,[NVD] Total entries to process: ${totalEntries} ",
-      data: {
-        totalEntries,
-        batchSize: pageSize,
-        estimatedBatches: Math.ceil(totalEntries / pageSize),
-        startTime: new Date().toISOString()
-      }
-    });
+    // await sendToLogQueue(env, {
+    //   level: "info",
+    //   message: "[NVD] Starting NVD data processing ,[NVD] Total entries to process: ${totalEntries} ",
+    //   data: {
+    //     totalEntries,
+    //     batchSize: pageSize,
+    //     estimatedBatches: Math.ceil(totalEntries / pageSize),
+    //     startTime: new Date().toISOString()
+    //   }
+    // });
 
     if (responseData?.vulnerabilities?.length > 0) {
       const processedData = [];
@@ -157,27 +157,27 @@ async function fetchNvdData(env) {
       // Store in D1 only
       await storeVulnerabilitiesInD1(d1, processedData, env);
 
-      // Log the number of vulnerabilities processed in this batch
-      await sendToLogQueue(env, {
-        level: "debug",
-        message: "Vulnerabilities processed for this page",
-        data: { processedCount: processedData.length },
-      });
+      // // Log the number of vulnerabilities processed in this batch
+      // await sendToLogQueue(env, {
+      //   level: "debug",
+      //   message: "Vulnerabilities processed for this page",
+      //   data: { processedCount: processedData.length },
+      // });
 
       // Add progress logging
       const progress = ((startIndex / totalEntries) * 100).toFixed(2);
       console.log(`[NVD] Processing batch ${Math.floor(startIndex/pageSize) + 1}/${Math.ceil(totalEntries/pageSize)} (${progress}%)`);
-      await sendToLogQueue(env, {
-        level: "debug",
-        message: "Processing NVD batch",
-        data: {
-          batchNumber: Math.floor(startIndex/pageSize) + 1,
-          totalBatches: Math.ceil(totalEntries/pageSize),
-          progress: `${progress}%`,
-          entriesProcessed: startIndex,
-          totalEntries
-        }
-      });
+      // await sendToLogQueue(env, {
+      //   level: "debug",
+      //   message: "Processing NVD batch",
+      //   data: {
+      //     batchNumber: Math.floor(startIndex/pageSize) + 1,
+      //     totalBatches: Math.ceil(totalEntries/pageSize),
+      //     progress: `${progress}%`,
+      //     entriesProcessed: startIndex,
+      //     totalEntries
+      //   }
+      // });
 
       startIndex += responseData.resultsPerPage;
       hasMoreData = startIndex < responseData.totalResults;
@@ -189,23 +189,23 @@ async function fetchNvdData(env) {
   const fetchTime = new Date().toISOString();
   await updateLastFetchTime(d1, source, fetchTime, env);
 
-  await sendToLogQueue(env, {
-    level: "info",
-    message: "Finished fetching NVD data",
-    data: { finalStartIndex: startIndex, source },
-  });
+  // await sendToLogQueue(env, {
+  //   level: "info",
+  //   message: "Finished fetching NVD data",
+  //   data: { finalStartIndex: startIndex, source },
+  // });
 
   // Add final statistics
-  await sendToLogQueue(env, {
-    level: "info",
-    message: "Completed NVD data processing",
-    data: {
-      totalEntriesProcessed: startIndex,
-      totalAvailable: totalEntries,
-      completionTime: new Date().toISOString(),
-      processingDuration: `${((Date.now() - startTime)/1000).toFixed(2)}s`
-    }
-  });
+  // await sendToLogQueue(env, {
+  //   level: "info",
+  //   message: "Completed NVD data processing",
+  //   data: {
+  //     totalEntriesProcessed: startIndex,
+  //     totalAvailable: totalEntries,
+  //     completionTime: new Date().toISOString(),
+  //     processingDuration: `${((Date.now() - startTime)/1000).toFixed(2)}s`
+  //   }
+  // });
 }
 
 /**
@@ -322,42 +322,42 @@ async function storeVulnerabilitiesInD1(d1, vulnerabilities, env) {
 
       // Log batch results instead of individual entries
       if (batchResults.length > 0) {
-        await sendToLogQueue(env, {
-          level: "info",
-          message: `Processed vulnerability batch ${Math.floor(i/batchSize) + 1}`,
-          data: {
-            batchSize: batchResults.length,
-            successCount: batchResults.filter(r => r.status === 'success').length,
-            batchNumber: Math.floor(i/batchSize) + 1,
-            totalBatches: Math.ceil(vulnerabilities.length/batchSize)
-          }
-        });
+        // await sendToLogQueue(env, {
+        //   level: "info",
+        //   message: `Processed vulnerability batch ${Math.floor(i/batchSize) + 1}`,
+        //   data: {
+        //     batchSize: batchResults.length,
+        //     successCount: batchResults.filter(r => r.status === 'success').length,
+        //     batchNumber: Math.floor(i/batchSize) + 1,
+        //     totalBatches: Math.ceil(vulnerabilities.length/batchSize)
+        //   }
+        // });
       }
     }
 
     // Log final summary
-    await sendToLogQueue(env, {
-      level: "info",
-      message: "Completed vulnerability processing",
-      data: {
-        total: vulnerabilities.length,
-        success: successCount,
-        skipped: skipCount,
-        errors: processingErrors.length,
-        duration: Date.now() - startTime
-      }
-    });
+    // await sendToLogQueue(env, {
+    //   level: "info",
+    //   message: "Completed vulnerability processing",
+    //   data: {
+    //     total: vulnerabilities.length,
+    //     success: successCount,
+    //     skipped: skipCount,
+    //     errors: processingErrors.length,
+    //     duration: Date.now() - startTime
+    //   }
+    // });
 
   } catch (error) {
-    await sendToLogQueue(env, {
-      level: "error", 
-      message: "Fatal error in vulnerability processing",
-      data: {
-        error: error.message,
-        processed: successCount,
-        duration: Date.now() - startTime
-      }
-    });
+    // await sendToLogQueue(env, {
+    //   level: "error", 
+    //   message: "Fatal error in vulnerability processing",
+    //   data: {
+    //     error: error.message,
+    //     processed: successCount,
+    //     duration: Date.now() - startTime
+    //   }
+    // });
     throw error;
   }
 }
@@ -373,11 +373,11 @@ async function getLastFetchTime(d1, source, env) {
       .first();
     return result?.last_fetch_time || null;
   } catch (error) {
-    await sendToLogQueue(env, {
-      level: "error",
-      message: "Error fetching last fetch time",
-      data: { error: error.message, stack: error.stack },
-    });
+    // await sendToLogQueue(env, {
+    //   level: "error",
+    //   message: "Error fetching last fetch time",
+    //   data: { error: error.message, stack: error.stack },
+    // });
     throw error;
   }
 }
@@ -401,17 +401,17 @@ async function updateLastFetchTime(d1, source, fetchTime, env) {
       .bind(source, fetchTime, fetchTime, 0)
       .run();
 
-    await sendToLogQueue(env, {
-      level: "info",
-      message: "Updated fetch stats successfully",
-      data: { source, fetchTime },
-    });
+    // await sendToLogQueue(env, {
+    //   level: "info",
+    //   message: "Updated fetch stats successfully",
+    //   data: { source, fetchTime },
+    // });
   } catch (error) {
-    await sendToLogQueue(env, {
-      level: "error",
-      message: "Failed to update fetch stats",
-      data: { error: error.message, stack: error.stack },
-    });
+    // await sendToLogQueue(env, {
+    //   level: "error",
+    //   message: "Failed to update fetch stats",
+    //   data: { error: error.message, stack: error.stack },
+    // });
     throw error;
   }
 }

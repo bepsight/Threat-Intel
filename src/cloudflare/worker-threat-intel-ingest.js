@@ -144,6 +144,8 @@ async function fetchNvdDataChunk(env) {
   });
 
   console.log('[NVD] Chunk processing complete:', result);
+  console.log(`[NVD] Total Execution Time: ${result.totalExecutionTime}`);
+
   return result;
 }
 

@@ -35,11 +35,13 @@ export default {
   },
 };
 
+
+
 /**
  * Fetch data from NVD in pages, store incrementally in D1.
  */
 async function fetchNvdData(env) {
-  // We'll track incremental fetching via `fetch_stats` table in D1
+  // We'll track incremental fetching via `fetch_metadata` table in D1
   const d1 = env.THREAT_INTEL_DB; // D1 binding
   const source = "nvd";
   let hasMoreData = true;

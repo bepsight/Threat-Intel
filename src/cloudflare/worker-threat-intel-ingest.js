@@ -1,5 +1,5 @@
 import { sendToLogQueue } from "../utils/log.js";
-
+const dataRetentionDays = 30;
 /**
  * Main Worker entry point:
  * - Exposes a single route `/fetchnvd`
@@ -47,7 +47,7 @@ async function fetchNvdDataChunk(env) {
   } = metadata || {};
 
   // Always fetch the last 30 days, rather than using last_fetch_time.
-  const dataRetentionDays = 30;
+  
   const daysAgo = new Date();
   daysAgo.setDate(daysAgo.getDate() - dataRetentionDays);
   const lastModStartDate = daysAgo.toISOString();
@@ -98,6 +98,9 @@ async function fetchNvdDataChunk(env) {
   console.log('[NVD] Storing vulnerabilities in D1');
   await storeVulnerabilitiesInD1(d1, processedData, env);
   
+  // Clean up old vulnerabilities after storing
+  await cleanupOldVulnerabilities(d1);
+
   // Update metadata
   const newStartIndex = next_start_index + (responseData.resultsPerPage || 0);
   const hasMore = newStartIndex < totalEntries;
@@ -376,4 +379,21 @@ async function updateFetchMetadata(d1, source, fetchTime, nextStartIndex) {
     });
     throw error; // Propagate error up
   }
+}
+
+/**
+ * Cleanup old vulnerabilities from D1
+ */
+async function cleanupOldVulnerabilities(d1) {
+  const daysToKeep = dataRetentionDays;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - daysToKeep);
+  const cutoffISO = cutoff.toISOString();
+
+  console.log(`[D1] Deleting vulnerabilities older than ${cutoffISO}`);
+  
+  await d1.prepare(`
+    DELETE FROM vulnerabilities
+    WHERE created_at < ?
+  `).bind(cutoffISO).run();
 }
